@@ -8,3 +8,5 @@ rocksdb = { version = "0.22", default-features = false, features = ["multi-threa
 thiserror.workspace = true
 serde.workspace = true
 bincode = "1"
+hex = "0.4"
+serde_bytes = "0.11"

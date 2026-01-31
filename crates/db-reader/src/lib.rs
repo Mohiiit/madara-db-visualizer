@@ -4,7 +4,10 @@ use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+mod blocks;
 mod queries;
+
+pub use blocks::*;
 pub use queries::*;
 
 #[derive(Error, Debug)]
