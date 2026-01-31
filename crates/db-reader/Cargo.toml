@@ -1,0 +1,10 @@
+[package]
+name = "db-reader"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+rocksdb = { version = "0.22", default-features = false, features = ["multi-threaded-cf"] }
+thiserror.workspace = true
+serde.workspace = true
+bincode = "1"
