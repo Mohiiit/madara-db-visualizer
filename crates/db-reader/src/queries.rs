@@ -128,4 +128,47 @@ impl DbReader {
         Ok(prop)
     }
 
+    /// Search for blocks, transactions, contracts, or classes
+    /// Returns a SearchResult indicating what was found
+    pub fn search(&self, query: &str) -> SearchResult {
+        let query = query.trim();
+
+        // Try to parse as block number first
+        if let Ok(block_n) = query.parse::<u64>() {
+            if self.get_block_detail(block_n).is_some() {
+                return SearchResult::Block(block_n);
+            }
+        }
+
+        // Try as hex (transaction hash, contract address, or class hash)
+        let hex_query = query.strip_prefix("0x").unwrap_or(query);
+        if hex::decode(hex_query).is_ok() {
+            // Try as transaction hash
+            if let Some((block_n, tx_index)) = self.find_transaction_by_hash(query) {
+                return SearchResult::Transaction { block_n, tx_index };
+            }
+
+            // Try as contract address
+            if let Some(contract) = self.get_contract(query) {
+                return SearchResult::Contract(contract.address);
+            }
+
+            // Try as class hash
+            if let Some(class) = self.get_class(query) {
+                return SearchResult::Class(class.class_hash);
+            }
+        }
+
+        SearchResult::NotFound
+    }
+}
+
+/// Search result types
+#[derive(Debug, Clone)]
+pub enum SearchResult {
+    Block(u64),
+    Transaction { block_n: u64, tx_index: u64 },
+    Contract(String),
+    Class(String),
+    NotFound,
 }

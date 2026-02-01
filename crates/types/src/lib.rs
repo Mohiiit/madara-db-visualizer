@@ -146,3 +146,70 @@ pub struct ClassListResponse {
     pub classes: Vec<ClassResponse>,
     pub total: usize,
 }
+
+// State diff types
+
+/// State diff response for a block
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateDiffResponse {
+    pub block_number: u64,
+    pub deployed_contracts: Vec<DeployedContractInfo>,
+    pub storage_diffs: Vec<ContractStorageDiffInfo>,
+    pub declared_classes: Vec<DeclaredClassInfo>,
+    pub nonces: Vec<NonceUpdateResponse>,
+    pub replaced_classes: Vec<ReplacedClassInfo>,
+}
+
+/// Deployed contract info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployedContractInfo {
+    pub address: String,
+    pub class_hash: String,
+}
+
+/// Storage diff for a contract
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractStorageDiffInfo {
+    pub address: String,
+    pub storage_entries: Vec<StorageDiffEntryInfo>,
+}
+
+/// Single storage diff entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageDiffEntryInfo {
+    pub key: String,
+    pub value: String,
+}
+
+/// Declared class info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeclaredClassInfo {
+    pub class_hash: String,
+    pub compiled_class_hash: String,
+}
+
+/// Nonce update info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NonceUpdateResponse {
+    pub contract_address: String,
+    pub nonce: String,
+}
+
+/// Replaced class info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplacedClassInfo {
+    pub contract_address: String,
+    pub class_hash: String,
+}
+
+// Search types
+
+/// Search result response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResponse {
+    pub result_type: String,
+    pub block_number: Option<u64>,
+    pub tx_index: Option<u64>,
+    pub address: Option<String>,
+    pub class_hash: Option<String>,
+}

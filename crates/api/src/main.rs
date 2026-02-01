@@ -11,8 +11,10 @@ use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use visualizer_types::{
     BlockDetail, BlockListResponse, BlockSummary, ClassListResponse, ClassResponse,
-    ContractListResponse, ContractResponse, ContractStorageResponse, EventInfo, HealthResponse,
-    MessageInfo, StatsResponse, StorageEntryResponse, TransactionDetail, TransactionListResponse,
+    ContractListResponse, ContractResponse, ContractStorageResponse, ContractStorageDiffInfo,
+    DeclaredClassInfo, DeployedContractInfo, EventInfo, HealthResponse, MessageInfo,
+    NonceUpdateResponse, ReplacedClassInfo, SearchResponse, StateDiffResponse, StatsResponse,
+    StorageDiffEntryInfo, StorageEntryResponse, TransactionDetail, TransactionListResponse,
     TransactionSummary,
 };
 
@@ -341,6 +343,121 @@ async fn class_detail(
     }))
 }
 
+// State diff endpoint
+
+async fn block_state_diff(
+    State(state): State<Arc<AppState>>,
+    Path(block_number): Path<u64>,
+) -> Result<Json<StateDiffResponse>, (StatusCode, String)> {
+    let diff = state
+        .db
+        .get_state_diff(block_number)
+        .ok_or((StatusCode::NOT_FOUND, format!("State diff for block {} not found", block_number)))?;
+
+    Ok(Json(StateDiffResponse {
+        block_number,
+        deployed_contracts: diff
+            .deployed_contracts
+            .into_iter()
+            .map(|d| DeployedContractInfo {
+                address: d.address,
+                class_hash: d.class_hash,
+            })
+            .collect(),
+        storage_diffs: diff
+            .storage_diffs
+            .into_iter()
+            .map(|s| ContractStorageDiffInfo {
+                address: s.address,
+                storage_entries: s
+                    .storage_entries
+                    .into_iter()
+                    .map(|e| StorageDiffEntryInfo {
+                        key: e.key,
+                        value: e.value,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        declared_classes: diff
+            .declared_classes
+            .into_iter()
+            .map(|d| DeclaredClassInfo {
+                class_hash: d.class_hash,
+                compiled_class_hash: d.compiled_class_hash,
+            })
+            .collect(),
+        nonces: diff
+            .nonces
+            .into_iter()
+            .map(|n| NonceUpdateResponse {
+                contract_address: n.contract_address,
+                nonce: n.nonce,
+            })
+            .collect(),
+        replaced_classes: diff
+            .replaced_classes
+            .into_iter()
+            .map(|r| ReplacedClassInfo {
+                contract_address: r.contract_address,
+                class_hash: r.class_hash,
+            })
+            .collect(),
+    }))
+}
+
+// Search endpoint
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+}
+
+async fn search(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SearchQuery>,
+) -> Json<SearchResponse> {
+    use db_reader::SearchResult;
+
+    match state.db.search(&query.q) {
+        SearchResult::Block(block_n) => Json(SearchResponse {
+            result_type: "block".to_string(),
+            block_number: Some(block_n),
+            tx_index: None,
+            address: None,
+            class_hash: None,
+        }),
+        SearchResult::Transaction { block_n, tx_index } => Json(SearchResponse {
+            result_type: "transaction".to_string(),
+            block_number: Some(block_n),
+            tx_index: Some(tx_index),
+            address: None,
+            class_hash: None,
+        }),
+        SearchResult::Contract(address) => Json(SearchResponse {
+            result_type: "contract".to_string(),
+            block_number: None,
+            tx_index: None,
+            address: Some(address),
+            class_hash: None,
+        }),
+        SearchResult::Class(class_hash) => Json(SearchResponse {
+            result_type: "class".to_string(),
+            block_number: None,
+            tx_index: None,
+            address: None,
+            class_hash: Some(class_hash),
+        }),
+        SearchResult::NotFound => Json(SearchResponse {
+            result_type: "not_found".to_string(),
+            block_number: None,
+            tx_index: None,
+            address: None,
+            class_hash: None,
+        }),
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -374,6 +491,8 @@ async fn main() {
         .route("/api/contracts/{address}/storage", get(contract_storage))
         .route("/api/classes", get(classes))
         .route("/api/classes/{class_hash}", get(class_detail))
+        .route("/api/blocks/{block_number}/state-diff", get(block_state_diff))
+        .route("/api/search", get(search))
         .with_state(state)
         .layer(cors);
 

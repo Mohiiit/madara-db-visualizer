@@ -2,7 +2,8 @@ use leptos::prelude::*;
 use visualizer_types::{
     BlockDetail, BlockListResponse, BlockSummary, ClassListResponse, ClassResponse,
     ContractListResponse, ContractResponse, ContractStorageResponse, HealthResponse,
-    StatsResponse, TransactionDetail, TransactionListResponse, TransactionSummary,
+    SearchResponse, StateDiffResponse, StatsResponse, TransactionDetail,
+    TransactionListResponse, TransactionSummary,
 };
 
 const API_BASE: &str = "http://localhost:3000";
@@ -117,6 +118,26 @@ async fn fetch_class(class_hash: String) -> Result<ClassResponse, String> {
         .map_err(|e| e.to_string())
 }
 
+async fn fetch_state_diff(block_number: u64) -> Result<StateDiffResponse, String> {
+    gloo_net::http::Request::get(&format!("{API_BASE}/api/blocks/{block_number}/state-diff"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn fetch_search(query: String) -> Result<SearchResponse, String> {
+    gloo_net::http::Request::get(&format!("{API_BASE}/api/search?q={}", urlencoding::encode(&query)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 fn truncate_hash(hash: &str) -> String {
     if hash.len() > 16 {
         format!("{}...{}", &hash[..10], &hash[hash.len()-6..])
@@ -131,6 +152,7 @@ enum Page {
     BlockList,
     BlockDetail { block_number: u64 },
     TransactionDetail { block_number: u64, tx_index: usize },
+    StateDiff { block_number: u64 },
     ContractList,
     ContractDetail { address: String },
     ClassList,
@@ -259,9 +281,11 @@ fn BlockDetailView(
     block_number: u64,
     on_back: impl Fn() + 'static,
     on_tx_select: impl Fn((u64, usize)) + Clone + Send + 'static,
+    on_state_diff: impl Fn(u64) + Clone + Send + Sync + 'static,
 ) -> impl IntoView {
     let block = LocalResource::new(move || async move { fetch_block(block_number).await });
     let transactions = LocalResource::new(move || async move { fetch_block_transactions(block_number).await });
+    let on_state_diff = std::sync::Arc::new(on_state_diff);
 
     view! {
         <div class="bg-gray-800 rounded-lg p-6">
@@ -274,9 +298,11 @@ fn BlockDetailView(
 
             <Suspense fallback=move || view! { <p class="text-gray-400">"Loading block..."</p> }>
                 {move || {
+                    let on_state_diff = on_state_diff.clone();
                     block.get().map(|result| {
                         match result.as_ref() {
                             Ok(b) => {
+                                let on_state_diff = on_state_diff.clone();
                                 let block_num = b.block_number;
                                 let block_hash = b.block_hash.clone();
                                 let parent_hash = b.parent_hash.clone();
@@ -318,6 +344,14 @@ fn BlockDetailView(
                                                 <p class="text-gray-400">"L2 Gas Used"</p>
                                                 <p>{gas_used}</p>
                                             </div>
+                                        </div>
+                                        <div class="mt-4">
+                                            <button
+                                                class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded text-white"
+                                                on:click=move |_| on_state_diff(block_num)
+                                            >
+                                                "View State Diff"
+                                            </button>
                                         </div>
                                     </div>
                                 }.into_any()
@@ -895,6 +929,180 @@ fn ClassDetailView(
     }
 }
 
+// State Diff View
+
+#[component]
+fn StateDiffView(
+    block_number: u64,
+    on_back: impl Fn() + 'static,
+) -> impl IntoView {
+    let state_diff = LocalResource::new(move || async move { fetch_state_diff(block_number).await });
+
+    view! {
+        <div class="bg-gray-800 rounded-lg p-6">
+            <button
+                class="mb-4 text-blue-400 hover:underline"
+                on:click=move |_| on_back()
+            >
+                "< Back to block"
+            </button>
+
+            <h2 class="text-2xl font-bold mb-4">"State Diff for Block #"{block_number}</h2>
+
+            <Suspense fallback=move || view! { <p class="text-gray-400">"Loading state diff..."</p> }>
+                {move || {
+                    state_diff.get().map(|result| {
+                        match result.as_ref() {
+                            Ok(diff) => {
+                                let deployed = diff.deployed_contracts.clone();
+                                let storage = diff.storage_diffs.clone();
+                                let declared = diff.declared_classes.clone();
+                                let nonces = diff.nonces.clone();
+                                let replaced = diff.replaced_classes.clone();
+
+                                view! {
+                                    <div class="space-y-6">
+                                        // Deployed Contracts
+                                        {if !deployed.is_empty() {
+                                            view! {
+                                                <div>
+                                                    <h3 class="text-lg font-semibold mb-2 text-green-400">"Deployed Contracts ("{deployed.len()}")"</h3>
+                                                    <div class="bg-gray-900 rounded p-3 space-y-2">
+                                                        {deployed.into_iter().map(|d| {
+                                                            view! {
+                                                                <div class="border-b border-gray-700 pb-2">
+                                                                    <p class="font-mono text-xs text-blue-400 break-all">{d.address}</p>
+                                                                    <p class="font-mono text-xs text-gray-400">"Class: "{truncate_hash(&d.class_hash)}</p>
+                                                                </div>
+                                                            }
+                                                        }).collect::<Vec<_>>()}
+                                                    </div>
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            view! { <div></div> }.into_any()
+                                        }}
+
+                                        // Storage Diffs
+                                        {if !storage.is_empty() {
+                                            let total_entries: usize = storage.iter().map(|s| s.storage_entries.len()).sum();
+                                            view! {
+                                                <div>
+                                                    <h3 class="text-lg font-semibold mb-2 text-yellow-400">"Storage Changes ("{storage.len()}" contracts, "{total_entries}" entries)"</h3>
+                                                    <div class="space-y-3">
+                                                        {storage.into_iter().map(|s| {
+                                                            let entries = s.storage_entries.clone();
+                                                            let addr = s.address.clone();
+                                                            view! {
+                                                                <div class="bg-gray-900 rounded p-3">
+                                                                    <p class="font-mono text-sm text-blue-400 mb-2 break-all">{addr}</p>
+                                                                    <div class="max-h-32 overflow-y-auto">
+                                                                        {entries.into_iter().map(|e| {
+                                                                            view! {
+                                                                                <div class="text-xs border-b border-gray-700 py-1">
+                                                                                    <span class="text-gray-400 font-mono">{truncate_hash(&e.key)}</span>
+                                                                                    " → "
+                                                                                    <span class="text-gray-300 font-mono">{e.value}</span>
+                                                                                </div>
+                                                                            }
+                                                                        }).collect::<Vec<_>>()}
+                                                                    </div>
+                                                                </div>
+                                                            }
+                                                        }).collect::<Vec<_>>()}
+                                                    </div>
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            view! { <div></div> }.into_any()
+                                        }}
+
+                                        // Declared Classes
+                                        {if !declared.is_empty() {
+                                            view! {
+                                                <div>
+                                                    <h3 class="text-lg font-semibold mb-2 text-purple-400">"Declared Classes ("{declared.len()}")"</h3>
+                                                    <div class="bg-gray-900 rounded p-3 space-y-2">
+                                                        {declared.into_iter().map(|d| {
+                                                            view! {
+                                                                <div class="border-b border-gray-700 pb-2">
+                                                                    <p class="font-mono text-xs text-purple-400 break-all">{d.class_hash}</p>
+                                                                    <p class="font-mono text-xs text-gray-400">"Compiled: "{truncate_hash(&d.compiled_class_hash)}</p>
+                                                                </div>
+                                                            }
+                                                        }).collect::<Vec<_>>()}
+                                                    </div>
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            view! { <div></div> }.into_any()
+                                        }}
+
+                                        // Nonce Updates
+                                        {if !nonces.is_empty() {
+                                            view! {
+                                                <div>
+                                                    <h3 class="text-lg font-semibold mb-2 text-cyan-400">"Nonce Updates ("{nonces.len()}")"</h3>
+                                                    <div class="bg-gray-900 rounded p-3 space-y-1">
+                                                        {nonces.into_iter().map(|n| {
+                                                            view! {
+                                                                <div class="text-xs">
+                                                                    <span class="font-mono text-blue-400">{truncate_hash(&n.contract_address)}</span>
+                                                                    " → "
+                                                                    <span class="font-mono text-cyan-400">{n.nonce}</span>
+                                                                </div>
+                                                            }
+                                                        }).collect::<Vec<_>>()}
+                                                    </div>
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            view! { <div></div> }.into_any()
+                                        }}
+
+                                        // Replaced Classes
+                                        {if !replaced.is_empty() {
+                                            view! {
+                                                <div>
+                                                    <h3 class="text-lg font-semibold mb-2 text-orange-400">"Replaced Classes ("{replaced.len()}")"</h3>
+                                                    <div class="bg-gray-900 rounded p-3 space-y-2">
+                                                        {replaced.into_iter().map(|r| {
+                                                            view! {
+                                                                <div class="border-b border-gray-700 pb-2">
+                                                                    <p class="font-mono text-xs text-blue-400 break-all">{r.contract_address}</p>
+                                                                    <p class="font-mono text-xs text-gray-400">"New class: "{truncate_hash(&r.class_hash)}</p>
+                                                                </div>
+                                                            }
+                                                        }).collect::<Vec<_>>()}
+                                                    </div>
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            view! { <div></div> }.into_any()
+                                        }}
+
+                                        // Show empty message if no changes
+                                        {if diff.deployed_contracts.is_empty() && diff.storage_diffs.is_empty() && diff.declared_classes.is_empty() && diff.nonces.is_empty() && diff.replaced_classes.is_empty() {
+                                            view! {
+                                                <p class="text-gray-500">"No state changes in this block"</p>
+                                            }.into_any()
+                                        } else {
+                                            view! { <div></div> }.into_any()
+                                        }}
+                                    </div>
+                                }.into_any()
+                            },
+                            Err(e) => view! {
+                                <p class="text-red-400">"Error: " {e.clone()}</p>
+                            }.into_any(),
+                        }
+                    })
+                }}
+            </Suspense>
+        </div>
+    }
+}
+
 #[component]
 fn StatsCard() -> impl IntoView {
     let stats = LocalResource::new(|| fetch_stats());
@@ -958,13 +1166,103 @@ fn NavItem(
 }
 
 #[component]
+fn SearchBar(on_result: impl Fn(Page) + Clone + Send + 'static) -> impl IntoView {
+    let (query, set_query) = signal(String::new());
+    let (searching, set_searching) = signal(false);
+    let (error, set_error) = signal::<Option<String>>(None);
+    let (trigger, set_trigger) = signal(0u32);
+
+    // Effect to handle search when triggered
+    {
+        let on_result = on_result.clone();
+        Effect::new(move |_| {
+            let _ = trigger.get(); // Subscribe to trigger
+            let q = query.get();
+            if q.trim().is_empty() {
+                return;
+            }
+            let on_result = on_result.clone();
+            set_searching.set(true);
+            set_error.set(None);
+            leptos::task::spawn_local(async move {
+                match fetch_search(q).await {
+                    Ok(result) => {
+                        set_searching.set(false);
+                        match result.result_type.as_str() {
+                            "block" => {
+                                if let Some(bn) = result.block_number {
+                                    on_result(Page::BlockDetail { block_number: bn });
+                                }
+                            }
+                            "transaction" => {
+                                if let (Some(bn), Some(idx)) = (result.block_number, result.tx_index) {
+                                    on_result(Page::TransactionDetail { block_number: bn, tx_index: idx as usize });
+                                }
+                            }
+                            "contract" => {
+                                if let Some(addr) = result.address {
+                                    on_result(Page::ContractDetail { address: addr });
+                                }
+                            }
+                            "class" => {
+                                if let Some(hash) = result.class_hash {
+                                    on_result(Page::ClassDetail { class_hash: hash });
+                                }
+                            }
+                            "not_found" => {
+                                set_error.set(Some("No results found".to_string()));
+                            }
+                            _ => {
+                                set_error.set(Some("Unknown result type".to_string()));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        set_searching.set(false);
+                        set_error.set(Some(e));
+                    }
+                }
+            });
+        });
+    }
+
+    view! {
+        <div class="flex items-center gap-2">
+            <input
+                type="text"
+                placeholder="Search block, tx hash, contract..."
+                class="px-3 py-2 bg-gray-700 rounded text-sm w-80 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                prop:value=move || query.get()
+                on:input=move |ev| set_query.set(event_target_value(&ev))
+                on:keypress=move |ev| {
+                    if ev.key() == "Enter" {
+                        set_trigger.update(|t| *t = t.wrapping_add(1));
+                    }
+                }
+            />
+            <button
+                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm disabled:opacity-50"
+                disabled=move || searching.get()
+                on:click=move |_| set_trigger.update(|t| *t = t.wrapping_add(1))
+            >
+                {move || if searching.get() { "..." } else { "Search" }}
+            </button>
+            {move || error.get().map(|e| view! {
+                <span class="text-red-400 text-sm">{e}</span>
+            })}
+        </div>
+    }
+}
+
+#[component]
 fn App() -> impl IntoView {
     let (page, set_page) = signal::<Page>(Page::BlockList);
 
     view! {
         <div class="min-h-screen bg-gray-900 text-white">
-            <header class="bg-gray-800 border-b border-gray-700 px-6 py-4">
+            <header class="bg-gray-800 border-b border-gray-700 px-6 py-4 flex justify-between items-center">
                 <h1 class="text-2xl font-bold">"Madara DB Visualizer"</h1>
+                <SearchBar on_result=move |p| set_page.set(p) />
             </header>
 
             <div class="flex">
@@ -1006,6 +1304,13 @@ fn App() -> impl IntoView {
                                     block_number=block_number
                                     on_back=move || set_page.set(Page::BlockList)
                                     on_tx_select=move |(bn, idx)| set_page.set(Page::TransactionDetail { block_number: bn, tx_index: idx })
+                                    on_state_diff=move |bn| set_page.set(Page::StateDiff { block_number: bn })
+                                />
+                            }.into_any(),
+                            Page::StateDiff { block_number } => view! {
+                                <StateDiffView
+                                    block_number=block_number
+                                    on_back=move || set_page.set(Page::BlockDetail { block_number })
                                 />
                             }.into_any(),
                             Page::TransactionDetail { block_number, tx_index } => view! {
