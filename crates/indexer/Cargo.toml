@@ -1,0 +1,10 @@
+[package]
+name = "indexer"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+db-reader = { path = "../db-reader" }
+rusqlite = { version = "0.31", features = ["bundled"] }
+thiserror = "1"
+tracing = "0.1"

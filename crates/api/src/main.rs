@@ -1,21 +1,23 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use clap::Parser;
 use db_reader::DbReader;
+use indexer::Indexer;
 use serde::Deserialize;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
 use visualizer_types::{
     BlockDetail, BlockListResponse, BlockSummary, ClassListResponse, ClassResponse,
     ContractListResponse, ContractResponse, ContractStorageResponse, ContractStorageDiffInfo,
-    DeclaredClassInfo, DeployedContractInfo, EventInfo, HealthResponse, MessageInfo,
-    NonceUpdateResponse, ReplacedClassInfo, SearchResponse, StateDiffResponse, StatsResponse,
-    StorageDiffEntryInfo, StorageEntryResponse, TransactionDetail, TransactionListResponse,
-    TransactionSummary,
+    DeclaredClassInfo, DeployedContractInfo, EventInfo, FilteredContractsResponse,
+    FilteredTransactionsResponse, HealthResponse, IndexedTransactionInfo, IndexStatusResponse,
+    MessageInfo, NonceUpdateResponse, ReplacedClassInfo, SearchResponse, StateDiffResponse,
+    StatsResponse, StorageDiffEntryInfo, StorageEntryResponse, TransactionDetail,
+    TransactionListResponse, TransactionSummary,
 };
 
 #[derive(Parser, Debug)]
@@ -26,6 +28,10 @@ struct Args {
     #[arg(long, default_value = "/tmp/madara_devnet_poc_v2/db")]
     db_path: String,
 
+    /// Path to the SQLite index database
+    #[arg(long, default_value = "/tmp/madara_visualizer_index.db")]
+    index_path: String,
+
     /// Port to listen on
     #[arg(long, default_value = "3000")]
     port: u16,
@@ -33,6 +39,7 @@ struct Args {
 
 struct AppState {
     db: DbReader,
+    indexer: Mutex<Indexer>,
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -458,6 +465,130 @@ async fn search(
     }
 }
 
+// Index endpoints
+
+async fn index_status(State(state): State<Arc<AppState>>) -> Json<IndexStatusResponse> {
+    let indexer = state.indexer.lock().unwrap();
+    match indexer.get_status() {
+        Ok(status) => Json(IndexStatusResponse {
+            indexed_blocks: status.indexed_blocks,
+            latest_block: status.latest_block,
+            is_synced: status.is_synced,
+            total_transactions: status.total_transactions,
+            failed_transactions: status.failed_transactions,
+        }),
+        Err(_) => Json(IndexStatusResponse {
+            indexed_blocks: 0,
+            latest_block: 0,
+            is_synced: false,
+            total_transactions: 0,
+            failed_transactions: 0,
+        }),
+    }
+}
+
+async fn index_sync(State(state): State<Arc<AppState>>) -> Result<Json<IndexStatusResponse>, (StatusCode, String)> {
+    let mut indexer = state.indexer.lock().unwrap();
+    match indexer.sync_from_db(&state.db) {
+        Ok(count) => {
+            println!("Indexed {} blocks", count);
+            match indexer.get_status() {
+                Ok(status) => Ok(Json(IndexStatusResponse {
+                    indexed_blocks: status.indexed_blocks,
+                    latest_block: status.latest_block,
+                    is_synced: status.is_synced,
+                    total_transactions: status.total_transactions,
+                    failed_transactions: status.failed_transactions,
+                })),
+                Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+            }
+        }
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    }
+}
+
+#[derive(Deserialize)]
+struct TransactionFilterQuery {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    sender: Option<String>,
+    #[serde(default)]
+    block_from: Option<u64>,
+    #[serde(default)]
+    block_to: Option<u64>,
+    #[serde(default = "default_limit_usize")]
+    limit: usize,
+}
+
+async fn filtered_transactions(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TransactionFilterQuery>,
+) -> Json<FilteredTransactionsResponse> {
+    let indexer = state.indexer.lock().unwrap();
+    let transactions = indexer
+        .query_transactions(
+            query.status.as_deref(),
+            query.sender.as_deref(),
+            query.block_from,
+            query.block_to,
+            query.limit,
+        )
+        .unwrap_or_default();
+
+    let total = transactions.len();
+    let txs: Vec<IndexedTransactionInfo> = transactions
+        .into_iter()
+        .map(|t| IndexedTransactionInfo {
+            tx_hash: t.tx_hash,
+            block_number: t.block_number,
+            tx_index: t.tx_index,
+            tx_type: t.tx_type,
+            status: t.status,
+            revert_reason: t.revert_reason,
+            sender_address: t.sender_address,
+        })
+        .collect();
+
+    Json(FilteredTransactionsResponse {
+        transactions: txs,
+        total,
+    })
+}
+
+#[derive(Deserialize)]
+struct ContractFilterQuery {
+    #[serde(default)]
+    class_hash: Option<String>,
+    #[serde(default = "default_limit_usize")]
+    limit: usize,
+}
+
+async fn filtered_contracts(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ContractFilterQuery>,
+) -> Json<FilteredContractsResponse> {
+    let indexer = state.indexer.lock().unwrap();
+    let contracts = indexer
+        .query_contracts(query.class_hash.as_deref(), query.limit)
+        .unwrap_or_default();
+
+    let total = contracts.len();
+    let results: Vec<ContractResponse> = contracts
+        .into_iter()
+        .map(|c| ContractResponse {
+            address: c.address,
+            class_hash: c.class_hash,
+            nonce: c.nonce,
+        })
+        .collect();
+
+    Json(FilteredContractsResponse {
+        contracts: results,
+        total,
+    })
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -471,7 +602,28 @@ async fn main() {
         }
     };
 
-    let state = Arc::new(AppState { db });
+    // Open indexer
+    let indexer = match Indexer::open(&args.index_path) {
+        Ok(idx) => idx,
+        Err(e) => {
+            eprintln!("Failed to open index at {}: {}", args.index_path, e);
+            std::process::exit(1);
+        }
+    };
+
+    let state = Arc::new(AppState {
+        db,
+        indexer: Mutex::new(indexer),
+    });
+
+    // Initial sync
+    {
+        let mut idx = state.indexer.lock().unwrap();
+        match idx.sync_from_db(&state.db) {
+            Ok(count) => println!("Initial index sync: {} blocks indexed", count),
+            Err(e) => eprintln!("Warning: Initial index sync failed: {}", e),
+        }
+    }
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -493,6 +645,11 @@ async fn main() {
         .route("/api/classes/{class_hash}", get(class_detail))
         .route("/api/blocks/{block_number}/state-diff", get(block_state_diff))
         .route("/api/search", get(search))
+        // Index endpoints
+        .route("/api/index/status", get(index_status))
+        .route("/api/index/sync", post(index_sync))
+        .route("/api/index/transactions", get(filtered_transactions))
+        .route("/api/index/contracts", get(filtered_contracts))
         .with_state(state)
         .layer(cors);
 
@@ -500,5 +657,6 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     println!("API server running on http://localhost:{}", args.port);
     println!("Database path: {}", args.db_path);
+    println!("Index path: {}", args.index_path);
     axum::serve(listener, app).await.unwrap();
 }

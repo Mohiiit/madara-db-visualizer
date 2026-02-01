@@ -1,9 +1,9 @@
 use leptos::prelude::*;
 use visualizer_types::{
     BlockDetail, BlockListResponse, BlockSummary, ClassListResponse, ClassResponse,
-    ContractListResponse, ContractResponse, ContractStorageResponse, HealthResponse,
-    SearchResponse, StateDiffResponse, StatsResponse, TransactionDetail,
-    TransactionListResponse, TransactionSummary,
+    ContractListResponse, ContractResponse, ContractStorageResponse, FilteredTransactionsResponse,
+    HealthResponse, IndexStatusResponse, IndexedTransactionInfo, SearchResponse, StateDiffResponse,
+    StatsResponse, TransactionDetail, TransactionListResponse, TransactionSummary,
 };
 
 const API_BASE: &str = "http://localhost:3000";
@@ -138,6 +138,41 @@ async fn fetch_search(query: String) -> Result<SearchResponse, String> {
         .map_err(|e| e.to_string())
 }
 
+async fn fetch_index_status() -> Result<IndexStatusResponse, String> {
+    gloo_net::http::Request::get(&format!("{API_BASE}/api/index/status"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn fetch_filtered_transactions(
+    status: Option<String>,
+    block_from: Option<u64>,
+    block_to: Option<u64>,
+    limit: usize,
+) -> Result<FilteredTransactionsResponse, String> {
+    let mut url = format!("{API_BASE}/api/index/transactions?limit={limit}");
+    if let Some(s) = status {
+        url.push_str(&format!("&status={}", urlencoding::encode(&s)));
+    }
+    if let Some(from) = block_from {
+        url.push_str(&format!("&block_from={}", from));
+    }
+    if let Some(to) = block_to {
+        url.push_str(&format!("&block_to={}", to));
+    }
+    gloo_net::http::Request::get(&url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 fn truncate_hash(hash: &str) -> String {
     if hash.len() > 16 {
         format!("{}...{}", &hash[..10], &hash[hash.len()-6..])
@@ -157,6 +192,7 @@ enum Page {
     ContractDetail { address: String },
     ClassList,
     ClassDetail { class_hash: String },
+    AdvancedFilters,
 }
 
 #[component]
@@ -1103,6 +1139,221 @@ fn StateDiffView(
     }
 }
 
+// Advanced Filters View
+
+#[component]
+fn IndexedTransactionRow(
+    tx: IndexedTransactionInfo,
+    on_click: impl Fn((u64, u64)) + 'static,
+) -> impl IntoView {
+    let block_number = tx.block_number;
+    let tx_index = tx.tx_index;
+    let status_class = if tx.status == "SUCCEEDED" {
+        "text-green-400"
+    } else {
+        "text-red-400"
+    };
+
+    view! {
+        <tr
+            class="border-b border-gray-700 hover:bg-gray-700 cursor-pointer"
+            on:click=move |_| on_click((block_number, tx_index))
+        >
+            <td class="px-4 py-3 text-blue-400 font-mono">{"#"}{tx.block_number}</td>
+            <td class="px-4 py-3 text-gray-400">{tx.tx_index}</td>
+            <td class="px-4 py-3 font-mono text-sm text-blue-400">{truncate_hash(&tx.tx_hash)}</td>
+            <td class="px-4 py-3">
+                <span class="px-2 py-1 text-xs rounded bg-gray-700">{tx.tx_type}</span>
+            </td>
+            <td class={format!("px-4 py-3 {}", status_class)}>{tx.status.clone()}</td>
+            <td class="px-4 py-3 font-mono text-sm text-gray-400">
+                {tx.sender_address.clone().map(|s| truncate_hash(&s)).unwrap_or_else(|| "-".to_string())}
+            </td>
+        </tr>
+    }
+}
+
+#[component]
+fn AdvancedFiltersView(
+    on_tx_select: impl Fn((u64, u64)) + Clone + Send + 'static,
+) -> impl IntoView {
+    let (status_filter, set_status_filter) = signal::<Option<String>>(None);
+    let (block_from, set_block_from) = signal::<Option<u64>>(None);
+    let (block_to, set_block_to) = signal::<Option<u64>>(None);
+    let (trigger, set_trigger) = signal(0u32);
+
+    let transactions = LocalResource::new(move || {
+        let _ = trigger.get();
+        let status = status_filter.get();
+        let from = block_from.get();
+        let to = block_to.get();
+        async move { fetch_filtered_transactions(status, from, to, 100).await }
+    });
+
+    view! {
+        <div class="bg-gray-800 rounded-lg p-6">
+            <h2 class="text-2xl font-bold mb-4">"Advanced Transaction Filters"</h2>
+
+            // Filter controls
+            <div class="grid grid-cols-4 gap-4 mb-6">
+                <div>
+                    <label class="block text-gray-400 text-sm mb-1">"Status"</label>
+                    <select
+                        class="w-full px-3 py-2 bg-gray-700 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        on:change=move |ev| {
+                            let val = event_target_value(&ev);
+                            set_status_filter.set(if val.is_empty() { None } else { Some(val) });
+                        }
+                    >
+                        <option value="">"All"</option>
+                        <option value="SUCCEEDED">"Succeeded"</option>
+                        <option value="REVERTED">"Reverted"</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-gray-400 text-sm mb-1">"Block From"</label>
+                    <input
+                        type="number"
+                        class="w-full px-3 py-2 bg-gray-700 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="0"
+                        on:input=move |ev| {
+                            let val = event_target_value(&ev);
+                            set_block_from.set(val.parse().ok());
+                        }
+                    />
+                </div>
+                <div>
+                    <label class="block text-gray-400 text-sm mb-1">"Block To"</label>
+                    <input
+                        type="number"
+                        class="w-full px-3 py-2 bg-gray-700 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="latest"
+                        on:input=move |ev| {
+                            let val = event_target_value(&ev);
+                            set_block_to.set(val.parse().ok());
+                        }
+                    />
+                </div>
+                <div class="flex items-end">
+                    <button
+                        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm"
+                        on:click=move |_| set_trigger.update(|t| *t = t.wrapping_add(1))
+                    >
+                        "Apply Filters"
+                    </button>
+                </div>
+            </div>
+
+            // Results
+            <Suspense fallback=move || view! { <p class="text-gray-400">"Loading transactions..."</p> }>
+                {move || {
+                    let on_tx_select = on_tx_select.clone();
+                    transactions.get().map(|result| {
+                        match result.as_ref() {
+                            Ok(data) => {
+                                let txs = data.transactions.clone();
+                                let total = data.total;
+
+                                if txs.is_empty() {
+                                    view! {
+                                        <p class="text-gray-500">"No transactions match filters"</p>
+                                    }.into_any()
+                                } else {
+                                    view! {
+                                        <div>
+                                            <p class="text-gray-400 text-sm mb-2">"Found "{total}" transactions"</p>
+                                            <table class="w-full text-left">
+                                                <thead class="text-gray-400 text-sm">
+                                                    <tr>
+                                                        <th class="px-4 py-2">"Block"</th>
+                                                        <th class="px-4 py-2">"Index"</th>
+                                                        <th class="px-4 py-2">"Hash"</th>
+                                                        <th class="px-4 py-2">"Type"</th>
+                                                        <th class="px-4 py-2">"Status"</th>
+                                                        <th class="px-4 py-2">"Sender"</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {txs.into_iter().map(|tx| {
+                                                        let on_tx_select = on_tx_select.clone();
+                                                        view! { <IndexedTransactionRow tx=tx on_click=move |t| on_tx_select(t) /> }
+                                                    }).collect::<Vec<_>>()}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    }.into_any()
+                                }
+                            },
+                            Err(e) => view! {
+                                <p class="text-red-400">"Error: " {e.clone()}</p>
+                            }.into_any(),
+                        }
+                    })
+                }}
+            </Suspense>
+        </div>
+    }
+}
+
+#[component]
+fn IndexStatusCard() -> impl IntoView {
+    let status = LocalResource::new(|| fetch_index_status());
+
+    view! {
+        <div class="bg-gray-800 rounded-lg p-4 mt-4">
+            <h2 class="text-lg font-semibold mb-3">"Index Status"</h2>
+            <Suspense fallback=move || view! { <p class="text-gray-400">"Loading..."</p> }>
+                {move || {
+                    status.get().map(|result| {
+                        match result.as_ref() {
+                            Ok(s) => {
+                                let synced = s.is_synced;
+                                let indexed = s.indexed_blocks;
+                                let latest = s.latest_block;
+                                let total_tx = s.total_transactions;
+                                let failed_tx = s.failed_transactions;
+                                let sync_class = if synced { "text-green-400" } else { "text-yellow-400" };
+
+                                view! {
+                                    <div class="space-y-2 text-sm">
+                                        <p>
+                                            <span class="text-gray-400">"Status: "</span>
+                                            <span class=sync_class>{if synced { "Synced" } else { "Syncing..." }}</span>
+                                        </p>
+                                        <p>
+                                            <span class="text-gray-400">"Indexed: "</span>
+                                            <span class="text-blue-400">{indexed}</span>
+                                            <span class="text-gray-500">" / "</span>
+                                            <span>{latest}</span>
+                                        </p>
+                                        <p>
+                                            <span class="text-gray-400">"Transactions: "</span>
+                                            <span class="text-purple-400">{total_tx}</span>
+                                        </p>
+                                        {if failed_tx > 0 {
+                                            view! {
+                                                <p>
+                                                    <span class="text-gray-400">"Failed: "</span>
+                                                    <span class="text-red-400">{failed_tx}</span>
+                                                </p>
+                                            }.into_any()
+                                        } else {
+                                            view! { <span></span> }.into_any()
+                                        }}
+                                    </div>
+                                }.into_any()
+                            },
+                            Err(_) => view! {
+                                <p class="text-gray-500 text-sm">"Index unavailable"</p>
+                            }.into_any(),
+                        }
+                    })
+                }}
+            </Suspense>
+        </div>
+    }
+}
+
 #[component]
 fn StatsCard() -> impl IntoView {
     let stats = LocalResource::new(|| fetch_stats());
@@ -1269,13 +1520,14 @@ fn App() -> impl IntoView {
                 // Sidebar
                 <aside class="w-64 bg-gray-800 border-r border-gray-700 p-4 min-h-screen">
                     <StatsCard />
+                    <IndexStatusCard />
 
                     <div class="mt-6">
                         <h3 class="text-sm font-semibold text-gray-400 mb-2">"NAVIGATION"</h3>
                         <div class="flex flex-col space-y-1">
                             <NavItem
                                 label="Blocks"
-                                active=matches!(page.get(), Page::BlockList | Page::BlockDetail { .. } | Page::TransactionDetail { .. })
+                                active=matches!(page.get(), Page::BlockList | Page::BlockDetail { .. } | Page::TransactionDetail { .. } | Page::StateDiff { .. })
                                 on_click=move || set_page.set(Page::BlockList)
                             />
                             <NavItem
@@ -1287,6 +1539,11 @@ fn App() -> impl IntoView {
                                 label="Classes"
                                 active=matches!(page.get(), Page::ClassList | Page::ClassDetail { .. })
                                 on_click=move || set_page.set(Page::ClassList)
+                            />
+                            <NavItem
+                                label="Advanced"
+                                active=matches!(page.get(), Page::AdvancedFilters)
+                                on_click=move || set_page.set(Page::AdvancedFilters)
                             />
                         </div>
                     </div>
@@ -1336,6 +1593,11 @@ fn App() -> impl IntoView {
                                 <ClassDetailView
                                     class_hash=class_hash.clone()
                                     on_back=move || set_page.set(Page::ClassList)
+                                />
+                            }.into_any(),
+                            Page::AdvancedFilters => view! {
+                                <AdvancedFiltersView
+                                    on_tx_select=move |(bn, idx)| set_page.set(Page::TransactionDetail { block_number: bn, tx_index: idx as usize })
                                 />
                             }.into_any(),
                         }

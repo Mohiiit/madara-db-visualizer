@@ -213,3 +213,41 @@ pub struct SearchResponse {
     pub address: Option<String>,
     pub class_hash: Option<String>,
 }
+
+// Index types
+
+/// Index status response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexStatusResponse {
+    pub indexed_blocks: u64,
+    pub latest_block: u64,
+    pub is_synced: bool,
+    pub total_transactions: u64,
+    pub failed_transactions: u64,
+}
+
+/// Filtered transaction query response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilteredTransactionsResponse {
+    pub transactions: Vec<IndexedTransactionInfo>,
+    pub total: usize,
+}
+
+/// Indexed transaction info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexedTransactionInfo {
+    pub tx_hash: String,
+    pub block_number: u64,
+    pub tx_index: u64,
+    pub tx_type: String,
+    pub status: String,
+    pub revert_reason: Option<String>,
+    pub sender_address: Option<String>,
+}
+
+/// Filtered contracts query response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilteredContractsResponse {
+    pub contracts: Vec<ContractResponse>,
+    pub total: usize,
+}
