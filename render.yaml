@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: madara-db-visualizer-api
+    env: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 3000

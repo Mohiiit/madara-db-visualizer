@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use std::sync::OnceLock;
 use visualizer_types::{
     BlockDetail, BlockListResponse, BlockSummary, ClassListResponse, ClassResponse,
     ColumnFamilyInfo, ColumnFamilyListResponse, ColumnFamilySchemaInfo,
@@ -10,13 +11,53 @@ use visualizer_types::{
 };
 use wasm_bindgen::prelude::*;
 
-const API_BASE: &str = "http://localhost:3000";
+// Default API URL for deployed version (Render.com free tier)
+const DEFAULT_API_URL: &str = "https://madara-db-visualizer-api.onrender.com";
+
+static API_BASE: OnceLock<String> = OnceLock::new();
+
+/// Get the API base URL, checking query params and localStorage first
+fn get_api_base() -> &'static str {
+    API_BASE.get_or_init(|| {
+        if let Some(window) = web_sys::window() {
+            // Check URL query param: ?api=https://...
+            if let Ok(search) = window.location().search() {
+                for param in search.trim_start_matches('?').split('&') {
+                    if let Some(url) = param.strip_prefix("api=") {
+                        if !url.is_empty() {
+                            // Save to localStorage
+                            if let Ok(Some(storage)) = window.local_storage() {
+                                let _ = storage.set_item("api_url", url);
+                            }
+                            return url.to_string();
+                        }
+                    }
+                }
+            }
+            // Check localStorage
+            if let Ok(Some(storage)) = window.local_storage() {
+                if let Ok(Some(url)) = storage.get_item("api_url") {
+                    if !url.is_empty() {
+                        return url;
+                    }
+                }
+            }
+            // Check if running locally
+            if let Ok(host) = window.location().hostname() {
+                if host == "localhost" || host == "127.0.0.1" {
+                    return "http://localhost:3000".to_string();
+                }
+            }
+        }
+        DEFAULT_API_URL.to_string()
+    })
+}
 
 fn download_json(data: &str, filename: &str) {
     if let Some(window) = web_sys::window() {
         if let Some(document) = window.document() {
             if let Ok(a) = document.create_element("a") {
-                let mut blob_options = web_sys::BlobPropertyBag::new();
+                let blob_options = web_sys::BlobPropertyBag::new();
                 blob_options.set_type("application/json");
                 if let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(
                     &js_sys::Array::of1(&JsValue::from_str(data)),
@@ -44,7 +85,7 @@ fn copy_to_clipboard(text: &str) {
 }
 
 async fn fetch_stats() -> Result<StatsResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/stats"))
+    gloo_net::http::Request::get(&format!("{}/api/stats", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -54,7 +95,7 @@ async fn fetch_stats() -> Result<StatsResponse, String> {
 }
 
 async fn fetch_blocks(offset: u64, limit: u64) -> Result<BlockListResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/blocks?offset={offset}&limit={limit}"))
+    gloo_net::http::Request::get(&format!("{}/api/blocks?offset={offset}&limit={limit}", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -64,7 +105,7 @@ async fn fetch_blocks(offset: u64, limit: u64) -> Result<BlockListResponse, Stri
 }
 
 async fn fetch_block(block_number: u64) -> Result<BlockDetail, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/blocks/{block_number}"))
+    gloo_net::http::Request::get(&format!("{}/api/blocks/{block_number}", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -74,7 +115,7 @@ async fn fetch_block(block_number: u64) -> Result<BlockDetail, String> {
 }
 
 async fn fetch_block_transactions(block_number: u64) -> Result<TransactionListResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/blocks/{block_number}/transactions"))
+    gloo_net::http::Request::get(&format!("{}/api/blocks/{block_number}/transactions", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -84,7 +125,7 @@ async fn fetch_block_transactions(block_number: u64) -> Result<TransactionListRe
 }
 
 async fn fetch_transaction(block_number: u64, tx_index: usize) -> Result<TransactionDetail, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/blocks/{block_number}/transactions/{tx_index}"))
+    gloo_net::http::Request::get(&format!("{}/api/blocks/{block_number}/transactions/{tx_index}", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -94,7 +135,7 @@ async fn fetch_transaction(block_number: u64, tx_index: usize) -> Result<Transac
 }
 
 async fn fetch_contracts(limit: usize) -> Result<ContractListResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/contracts?limit={limit}"))
+    gloo_net::http::Request::get(&format!("{}/api/contracts?limit={limit}", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -104,7 +145,7 @@ async fn fetch_contracts(limit: usize) -> Result<ContractListResponse, String> {
 }
 
 async fn fetch_contract(address: String) -> Result<ContractResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/contracts/{address}"))
+    gloo_net::http::Request::get(&format!("{}/api/contracts/{address}", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -114,7 +155,7 @@ async fn fetch_contract(address: String) -> Result<ContractResponse, String> {
 }
 
 async fn fetch_contract_storage(address: String, limit: usize) -> Result<ContractStorageResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/contracts/{address}/storage?limit={limit}"))
+    gloo_net::http::Request::get(&format!("{}/api/contracts/{address}/storage?limit={limit}", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -124,7 +165,7 @@ async fn fetch_contract_storage(address: String, limit: usize) -> Result<Contrac
 }
 
 async fn fetch_classes(limit: usize) -> Result<ClassListResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/classes?limit={limit}"))
+    gloo_net::http::Request::get(&format!("{}/api/classes?limit={limit}", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -134,7 +175,7 @@ async fn fetch_classes(limit: usize) -> Result<ClassListResponse, String> {
 }
 
 async fn fetch_class(class_hash: String) -> Result<ClassResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/classes/{class_hash}"))
+    gloo_net::http::Request::get(&format!("{}/api/classes/{class_hash}", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -144,7 +185,7 @@ async fn fetch_class(class_hash: String) -> Result<ClassResponse, String> {
 }
 
 async fn fetch_state_diff(block_number: u64) -> Result<StateDiffResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/blocks/{block_number}/state-diff"))
+    gloo_net::http::Request::get(&format!("{}/api/blocks/{block_number}/state-diff", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -154,7 +195,7 @@ async fn fetch_state_diff(block_number: u64) -> Result<StateDiffResponse, String
 }
 
 async fn fetch_search(query: String) -> Result<SearchResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/search?q={}", urlencoding::encode(&query)))
+    gloo_net::http::Request::get(&format!("{}/api/search?q={}", get_api_base(), urlencoding::encode(&query)))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -164,7 +205,7 @@ async fn fetch_search(query: String) -> Result<SearchResponse, String> {
 }
 
 async fn fetch_index_status() -> Result<IndexStatusResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/index/status"))
+    gloo_net::http::Request::get(&format!("{}/api/index/status", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -179,7 +220,7 @@ async fn fetch_filtered_transactions(
     block_to: Option<u64>,
     limit: usize,
 ) -> Result<FilteredTransactionsResponse, String> {
-    let mut url = format!("{API_BASE}/api/index/transactions?limit={limit}");
+    let mut url = format!("{}/api/index/transactions?limit={limit}", get_api_base());
     if let Some(s) = status {
         url.push_str(&format!("&status={}", urlencoding::encode(&s)));
     }
@@ -202,7 +243,8 @@ async fn fetch_filtered_transactions(
 
 async fn fetch_cf_schema(cf_name: &str) -> Result<ColumnFamilySchemaInfo, String> {
     gloo_net::http::Request::get(&format!(
-        "{API_BASE}/api/schema/column-families/{}",
+        "{}/api/schema/column-families/{}",
+        get_api_base(),
         urlencoding::encode(cf_name)
     ))
     .send()
@@ -216,7 +258,7 @@ async fn fetch_cf_schema(cf_name: &str) -> Result<ColumnFamilySchemaInfo, String
 // Raw data API functions
 
 async fn fetch_column_families() -> Result<ColumnFamilyListResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/raw/cf"))
+    gloo_net::http::Request::get(&format!("{}/api/raw/cf", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -232,7 +274,8 @@ async fn fetch_cf_keys(
     prefix: Option<String>,
 ) -> Result<KeyListResponse, String> {
     let mut url = format!(
-        "{API_BASE}/api/raw/cf/{}/keys?limit={}&offset={}",
+        "{}/api/raw/cf/{}/keys?limit={}&offset={}",
+        get_api_base(),
         urlencoding::encode(cf_name),
         limit,
         offset
@@ -253,7 +296,8 @@ async fn fetch_cf_keys(
 
 async fn fetch_raw_key_value(cf_name: &str, key_hex: &str) -> Result<RawKeyValueResponse, String> {
     gloo_net::http::Request::get(&format!(
-        "{API_BASE}/api/raw/cf/{}/key/{}",
+        "{}/api/raw/cf/{}/key/{}",
+        get_api_base(),
         urlencoding::encode(cf_name),
         urlencoding::encode(key_hex)
     ))
@@ -268,7 +312,7 @@ async fn fetch_raw_key_value(cf_name: &str, key_hex: &str) -> Result<RawKeyValue
 // Schema API functions
 
 async fn fetch_schema_categories() -> Result<SchemaCategoriesResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/schema/categories"))
+    gloo_net::http::Request::get(&format!("{}/api/schema/categories", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -280,10 +324,11 @@ async fn fetch_schema_categories() -> Result<SchemaCategoriesResponse, String> {
 async fn fetch_schema_column_families(category: Option<&str>) -> Result<SchemaColumnFamiliesResponse, String> {
     let url = match category {
         Some(cat) => format!(
-            "{API_BASE}/api/schema/column-families?category={}",
+            "{}/api/schema/column-families?category={}",
+            get_api_base(),
             urlencoding::encode(cat)
         ),
-        None => format!("{API_BASE}/api/schema/column-families"),
+        None => format!("{}/api/schema/column-families", get_api_base()),
     };
     gloo_net::http::Request::get(&url)
         .send()
@@ -297,7 +342,7 @@ async fn fetch_schema_column_families(category: Option<&str>) -> Result<SchemaCo
 // SQL Console API functions
 
 async fn fetch_index_tables() -> Result<TableListResponse, String> {
-    gloo_net::http::Request::get(&format!("{API_BASE}/api/index/tables"))
+    gloo_net::http::Request::get(&format!("{}/api/index/tables", get_api_base()))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -308,7 +353,7 @@ async fn fetch_index_tables() -> Result<TableListResponse, String> {
 
 async fn execute_sql_query(sql: String, params: Vec<String>) -> Result<QueryResult, String> {
     let request = QueryRequest { sql, params };
-    let response = gloo_net::http::Request::post(&format!("{API_BASE}/api/index/query"))
+    let response = gloo_net::http::Request::post(&format!("{}/api/index/query", get_api_base()))
         .header("Content-Type", "application/json")
         .body(serde_json::to_string(&request).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?
