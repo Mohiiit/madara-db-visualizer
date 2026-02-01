@@ -1,0 +1,59 @@
+# Events Category - Column Family for Event Bloom Filters
+#
+# Events are emitted by contract execution and stored within transaction receipts
+# in block_transactions. However, querying events across many blocks would be slow
+# if we had to scan all receipts. The events_bloom column family solves this with
+# bloom filters - probabilistic data structures that can quickly tell if a block
+# MIGHT contain matching events, avoiding expensive scans of non-matching blocks.
+
+- name: events_bloom
+  category: events
+  purpose: |
+    Stores bloom filters for each block's events, enabling efficient event queries
+    across block ranges. When a client queries for events (e.g., "all Transfer events
+    from contract X in blocks 1000-2000"), the node first checks bloom filters to
+    identify candidate blocks, then only loads those blocks to find actual matches.
+
+    Bloom filters are probabilistic - they can have false positives (saying a block
+    might have matches when it doesn't) but never false negatives (if a block has
+    matches, the filter will indicate it). This makes them perfect for filtering:
+    we might check a few extra blocks, but we never miss events.
+
+    The bloom filter includes: from_address (emitting contract) and all event keys.
+  key:
+    rust_type: "u32"
+    encoding: big-endian
+    size_bytes: 4
+    description: |
+      The block number as a 4-byte big-endian integer. Only blocks that emitted
+      at least one event have entries in this column family - blocks with no
+      events are simply absent.
+    example_raw: "0x00000064"
+    example_decoded: "Block 100"
+  value:
+    rust_type: "EventBloomWriter"
+    encoding: bincode
+    description: |
+      A bloom filter containing hashes of all event identifiers in this block.
+      The filter supports queries for: specific from_address, specific keys at
+      specific positions, or combinations thereof.
+    fields:
+      - name: bloom
+        rust_type: "BloomFilter"
+        description: |
+          The bloom filter bit array. Size is tuned for low false positive rate
+          given typical events-per-block counts. Contains Pedersen hashes of:
+          - from_address (contract that emitted the event)
+          - Each key with its position (key[0], key[1], etc.)
+      - name: num_events
+        rust_type: "usize"
+        description: |
+          Count of events in this block. Used for estimating false positive rate
+          and debugging.
+  relationships:
+    - target_cf: block_transactions
+      relationship_type: indexed_by
+      description: "Bloom filter helps identify blocks, actual events are in receipts."
+    - target_cf: block_info
+      relationship_type: references
+      description: "Block info provides context for matched blocks."

@@ -12,9 +12,10 @@ use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
 use visualizer_types::{
     BlockDetail, BlockListResponse, BlockSummary, ClassListResponse, ClassResponse,
-    ContractListResponse, ContractResponse, ContractStorageResponse, ContractStorageDiffInfo,
-    DeclaredClassInfo, DeployedContractInfo, EventInfo, FilteredContractsResponse,
-    FilteredTransactionsResponse, HealthResponse, IndexedTransactionInfo, IndexStatusResponse,
+    ColumnFamilyInfo, ColumnFamilyListResponse, ColumnFamilyStats, ContractListResponse,
+    ContractResponse, ContractStorageResponse, ContractStorageDiffInfo, DeclaredClassInfo,
+    DeployedContractInfo, EventInfo, FilteredContractsResponse, FilteredTransactionsResponse,
+    HealthResponse, IndexedTransactionInfo, IndexStatusResponse, KeyInfo, KeyListResponse,
     MessageInfo, NonceUpdateResponse, ReplacedClassInfo, SearchResponse, StateDiffResponse,
     StatsResponse, StorageDiffEntryInfo, StorageEntryResponse, TransactionDetail,
     TransactionListResponse, TransactionSummary,
@@ -589,6 +590,109 @@ async fn filtered_contracts(
     })
 }
 
+// Raw column family browsing endpoints
+
+/// List all column families
+async fn raw_list_column_families(
+    State(state): State<Arc<AppState>>,
+) -> Json<ColumnFamilyListResponse> {
+    let cf_names = state.db.list_column_families();
+
+    let column_families: Vec<ColumnFamilyInfo> = cf_names
+        .into_iter()
+        .map(|name| {
+            let key_count = state.db.count_keys(&name);
+            ColumnFamilyInfo { name, key_count }
+        })
+        .collect();
+
+    Json(ColumnFamilyListResponse { column_families })
+}
+
+/// Get statistics for a specific column family
+async fn raw_cf_stats(
+    State(state): State<Arc<AppState>>,
+    Path(cf_name): Path<String>,
+) -> Result<Json<ColumnFamilyStats>, (StatusCode, String)> {
+    let stats = state
+        .db
+        .get_cf_stats(&cf_name)
+        .ok_or((StatusCode::NOT_FOUND, format!("Column family '{}' not found", cf_name)))?;
+
+    Ok(Json(ColumnFamilyStats {
+        name: stats.name,
+        key_count: stats.key_count,
+        first_key_hex: stats.first_key_hex,
+        last_key_hex: stats.last_key_hex,
+    }))
+}
+
+#[derive(Deserialize)]
+struct KeysQuery {
+    #[serde(default = "default_keys_limit")]
+    limit: usize,
+    #[serde(default)]
+    offset: usize,
+    #[serde(default)]
+    prefix: Option<String>,
+}
+
+fn default_keys_limit() -> usize {
+    50
+}
+
+/// List keys in a column family with pagination
+async fn raw_list_keys(
+    State(state): State<Arc<AppState>>,
+    Path(cf_name): Path<String>,
+    Query(query): Query<KeysQuery>,
+) -> Result<Json<KeyListResponse>, (StatusCode, String)> {
+    // Verify the column family exists
+    let cf_names = state.db.list_column_families();
+    if !cf_names.contains(&cf_name) {
+        return Err((StatusCode::NOT_FOUND, format!("Column family '{}' not found", cf_name)));
+    }
+
+    // Parse prefix if provided (expects hex string with optional 0x prefix)
+    let prefix_bytes: Option<Vec<u8>> = query.prefix.as_ref().and_then(|p| {
+        let hex_str = p.strip_prefix("0x").unwrap_or(p);
+        hex::decode(hex_str).ok()
+    });
+
+    // Get total count
+    let total = if let Some(ref prefix) = prefix_bytes {
+        state.db.count_keys_with_prefix(&cf_name, prefix)
+    } else {
+        state.db.count_keys(&cf_name)
+    };
+
+    // Get keys with pagination
+    let keys_raw = state.db.list_keys(
+        &cf_name,
+        query.limit,
+        query.offset,
+        prefix_bytes.as_deref(),
+    );
+
+    let keys: Vec<KeyInfo> = keys_raw
+        .into_iter()
+        .map(|k| KeyInfo {
+            raw_hex: format!("0x{}", hex::encode(&k)),
+        })
+        .collect();
+
+    let has_more = query.offset + keys.len() < total;
+
+    Ok(Json(KeyListResponse {
+        cf_name,
+        keys,
+        total,
+        offset: query.offset,
+        limit: query.limit,
+        has_more,
+    }))
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -650,6 +754,10 @@ async fn main() {
         .route("/api/index/sync", post(index_sync))
         .route("/api/index/transactions", get(filtered_transactions))
         .route("/api/index/contracts", get(filtered_contracts))
+        // Raw column family browsing endpoints
+        .route("/api/raw/cf", get(raw_list_column_families))
+        .route("/api/raw/cf/{name}/stats", get(raw_cf_stats))
+        .route("/api/raw/cf/{name}/keys", get(raw_list_keys))
         .with_state(state)
         .layer(cors);
 

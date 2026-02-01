@@ -1,0 +1,102 @@
+# Messaging Category - Column Families for L1 to L2 Message Handling
+#
+# These column families manage messages sent from L1 (Ethereum) to L2 (Starknet).
+# L1->L2 messages are initiated on Ethereum through the Starknet Core Contract and
+# must be processed on L2 as L1Handler transactions.
+#
+# The messaging system tracks:
+# 1. Pending messages: Messages received from L1 but not yet included in a block
+# 2. Processed messages: L1Handler transaction hashes indexed by L1 nonce
+
+- name: l1_to_l2_pending_message_by_nonce
+  category: messaging
+  purpose: |
+    Stores pending L1->L2 messages that have been received from the Starknet Core
+    Contract on Ethereum but not yet included in a Starknet block. The sequencer
+    reads from this queue to include L1Handler transactions in blocks.
+
+    Messages are keyed by the L1 core contract nonce, which provides ordering
+    guarantees. Once a message is included in a block, it's removed from this
+    column family and its transaction hash is stored in l1_to_l2_txn_hash_by_nonce.
+
+    This is a point-lookup optimized column family.
+  key:
+    rust_type: "u64"
+    encoding: big-endian
+    size_bytes: 8
+    description: |
+      The L1 core contract nonce as an 8-byte big-endian integer. The nonce is assigned
+      by the Starknet Core Contract on Ethereum and ensures messages are processed in
+      order. This is different from account nonces - it's a global L1->L2 message counter.
+    example_raw: "0x0000000000000001"
+    example_decoded: "L1 Core Contract Nonce 1"
+  value:
+    rust_type: "L1HandlerTransactionWithFee"
+    encoding: bincode
+    description: |
+      The pending L1Handler transaction with its associated fee. Contains all
+      information needed to include this message in a Starknet block.
+    fields:
+      - name: tx
+        rust_type: "L1HandlerTransaction"
+        description: |
+          The L1Handler transaction containing: version, nonce, contract_address
+          (recipient on L2), entry_point_selector (function to call), and calldata
+          (message payload including L1 sender).
+      - name: paid_fee_on_l1
+        rust_type: "Fee"
+        description: |
+          The fee paid on L1 for this message. L1->L2 messages are prepaid on Ethereum,
+          so this represents actual ETH that was paid. The L2 execution uses this budget.
+  relationships:
+    - target_cf: l1_to_l2_txn_hash_by_nonce
+      relationship_type: references
+      description: "After processing, the tx hash is stored in l1_to_l2_txn_hash_by_nonce."
+    - target_cf: block_transactions
+      relationship_type: references
+      description: "Once included, the full transaction appears in block_transactions."
+
+- name: l1_to_l2_txn_hash_by_nonce
+  category: messaging
+  purpose: |
+    Maps L1 core contract nonces to the Starknet transaction hashes of processed
+    L1Handler transactions. This provides a permanent record of which L1 message
+    was processed by which L2 transaction, enabling queries like "what happened to
+    my L1->L2 message?"
+
+    When a pending message is included in a block, its entry is removed from
+    l1_to_l2_pending_message_by_nonce and a mapping is added here.
+
+    This is a point-lookup optimized column family.
+  key:
+    rust_type: "u64"
+    encoding: big-endian
+    size_bytes: 8
+    description: |
+      The L1 core contract nonce as an 8-byte big-endian integer. Same nonce format
+      as in the pending messages column family.
+    example_raw: "0x0000000000000001"
+    example_decoded: "L1 Core Contract Nonce 1"
+  value:
+    rust_type: "Felt"
+    encoding: raw
+    size_bytes: 32
+    description: |
+      The Starknet transaction hash of the L1Handler transaction that processed
+      this message. Can be used to look up the full transaction and receipt.
+    fields:
+      - name: transaction_hash
+        rust_type: "Felt"
+        description: |
+          The 252-bit transaction hash. Use this with tx_hash_to_index to find
+          the full transaction details.
+  relationships:
+    - target_cf: l1_to_l2_pending_message_by_nonce
+      relationship_type: inverse
+      description: "Pending messages move here after processing."
+    - target_cf: tx_hash_to_index
+      relationship_type: references
+      description: "Transaction hash can be looked up in tx_hash_to_index."
+    - target_cf: block_transactions
+      relationship_type: references
+      description: "Full transaction details are in block_transactions."

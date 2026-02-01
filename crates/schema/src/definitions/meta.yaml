@@ -1,0 +1,126 @@
+# Meta Category - Column Families for Node Metadata and Configuration
+#
+# These column families store node-level metadata, configuration, and operational
+# state. Unlike blockchain data which is deterministic across nodes, meta data can
+# vary between nodes (e.g., sync progress) or contain node-specific configuration.
+
+- name: meta
+  category: meta
+  purpose: |
+    General-purpose key-value store for node metadata and configuration. Uses string
+    keys to store various pieces of node state including chain tip, sync progress,
+    L1 confirmation status, and runtime configuration.
+
+    This column family is point-lookup optimized and stores critical operational data
+    that must be persisted across restarts. The keys are predefined constants, making
+    this a small but essential column family.
+  key:
+    rust_type: "&[u8]"
+    encoding: raw
+    size_bytes: null
+    description: |
+      String key converted to bytes. Known keys include:
+      - "CHAIN_TIP": Current chain tip (confirmed or preconfirmed)
+      - "CHAIN_INFO": Chain configuration (chain_id, genesis hash)
+      - "LAST_SYNCED_L1_EVENT_BLOCK": L1 block number for messaging sync
+      - "CONFIRMED_ON_L1_TIP": Latest block confirmed on L1
+      - "LATEST_APPLIED_TRIE_UPDATE": Last block with applied trie updates
+      - "DEVNET_KEYS": Predeployed account keys for devnet
+      - "RUNTIME_EXEC_CONFIG": Runtime execution configuration
+      - "SNAP_SYNC_LATEST_BLOCK": Snap sync progress marker
+    example_raw: "0x434841494e5f544950"
+    example_decoded: "CHAIN_TIP"
+  value:
+    rust_type: "varies"
+    encoding: bincode
+    description: |
+      Value type depends on the key. All values are bincode serialized.
+    fields:
+      - name: chain_tip
+        rust_type: "StoredChainTipWithoutContent"
+        description: |
+          For "CHAIN_TIP": Either Confirmed(block_n) or Preconfirmed(header).
+          Indicates whether the node has a pending block being built.
+      - name: chain_info
+        rust_type: "StoredChainInfo"
+        description: |
+          For "CHAIN_INFO": Contains chain_id (Felt), genesis_hash, and genesis_timestamp.
+          Identifies which Starknet network this database belongs to.
+      - name: l1_sync_block
+        rust_type: "u64"
+        description: |
+          For L1 sync keys: Block numbers stored as big-endian u64.
+          Tracks sync progress with L1 for messaging and confirmations.
+      - name: latest_trie_update
+        rust_type: "u64"
+        description: |
+          For "LATEST_APPLIED_TRIE_UPDATE": Last block where trie updates were applied.
+          Used to resume trie computation after restarts.
+      - name: devnet_keys
+        rust_type: "DevnetPredeployedKeys"
+        description: |
+          For "DEVNET_KEYS": Contains predeployed account addresses and private keys.
+          Only present in devnet mode.
+      - name: runtime_config
+        rust_type: "RuntimeExecutionConfigSerializable"
+        description: |
+          For "RUNTIME_EXEC_CONFIG": Execution configuration for the current pending block.
+          Includes gas prices, block limits, and versioned constants.
+      - name: snap_sync_block
+        rust_type: "u64"
+        description: |
+          For "SNAP_SYNC_LATEST_BLOCK": Block where snap sync computed trie.
+          Helps track whether historical state is available.
+  relationships:
+    - target_cf: block_info
+      relationship_type: references
+      description: "Chain tip references a block in block_info."
+    - target_cf: preconfirmed
+      relationship_type: references
+      description: "Preconfirmed chain tip has content stored in preconfirmed CF."
+
+- name: preconfirmed
+  category: meta
+  purpose: |
+    Stores the content of the preconfirmed (pending) block. When the sequencer is
+    building a block, executed transactions are stored here before the block is
+    finalized. This enables crash recovery - if the node restarts, it can resume
+    block production from this saved state.
+
+    Transactions are keyed by their index within the pending block, allowing
+    efficient append operations and ordered retrieval.
+  key:
+    rust_type: "u16"
+    encoding: big-endian
+    size_bytes: 2
+    description: |
+      Transaction index within the preconfirmed block as a 2-byte big-endian integer.
+      Limited to u16::MAX transactions per pending block.
+    example_raw: "0x0000"
+    example_decoded: "Transaction 0 (first in pending block)"
+  value:
+    rust_type: "PreconfirmedExecutedTransaction"
+    encoding: bincode
+    description: |
+      Contains all information about an executed transaction in the pending block,
+      needed to resume or finalize block production.
+    fields:
+      - name: transaction
+        rust_type: "Transaction"
+        description: "The transaction that was executed."
+      - name: receipt
+        rust_type: "TransactionReceipt"
+        description: "Execution receipt with status, events, and resource usage."
+      - name: state_diff
+        rust_type: "StateDiff"
+        description: "State changes caused by this transaction."
+      - name: execution_info
+        rust_type: "TransactionExecutionInfo"
+        description: "Detailed execution info including call traces."
+  relationships:
+    - target_cf: meta
+      relationship_type: indexed_by
+      description: "The CHAIN_TIP entry indicates when preconfirmed content exists."
+    - target_cf: block_transactions
+      relationship_type: references
+      description: "When finalized, content moves to block_transactions."

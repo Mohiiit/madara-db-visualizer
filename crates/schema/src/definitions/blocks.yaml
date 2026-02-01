@@ -1,0 +1,224 @@
+# Blocks Category - Column Families for Block Storage
+#
+# These column families store the core blockchain data: block headers, hashes,
+# state diffs, and the mapping between block hashes and numbers. They form the
+# primary index for accessing historical blockchain state.
+
+- name: block_info
+  category: blocks
+  purpose: |
+    Stores the complete block header information for each block. This is the primary
+    source of truth for block metadata including the block hash, parent hash, state root,
+    sequencer address, timestamps, and the list of transaction hashes included in the block.
+
+    This column family is optimized for point lookups using the block number as the key,
+    making it efficient to retrieve block information when the block number is known.
+    It uses the "blocks" memory budget tier for RocksDB, indicating it's a high-priority
+    column family that benefits from more memory allocation.
+  key:
+    rust_type: "u32"
+    encoding: big-endian
+    size_bytes: 4
+    description: |
+      The block number encoded as a 4-byte big-endian unsigned integer. Block numbers
+      are limited to u32::MAX (4,294,967,295) which is sufficient for centuries of blocks
+      at current block production rates. Big-endian encoding ensures blocks are stored
+      in ascending order when iterated.
+    example_raw: "0x00000001"
+    example_decoded: "Block 1"
+  value:
+    rust_type: "MadaraBlockInfo"
+    encoding: bincode
+    description: |
+      Contains the complete block header information serialized using bincode. This includes
+      the block hash, all header fields (parent hash, state root, sequencer, timestamps, etc.),
+      the list of transaction hashes, and total L2 gas used by the block.
+    fields:
+      - name: header
+        rust_type: "BlockHeader"
+        description: |
+          The Starknet block header containing: block_number, block_hash, parent_hash,
+          state_root, sequencer_address, block_timestamp, starknet_version, l1_gas_price,
+          l1_data_gas_price, l1_da_mode, and protocol_version.
+      - name: block_hash
+        rust_type: "Felt"
+        description: "The unique 252-bit hash identifying this block, computed from header fields."
+      - name: tx_hashes
+        rust_type: "Vec<Felt>"
+        description: |
+          Ordered list of transaction hashes included in this block. The length indicates
+          the number of transactions. Transaction details are stored in block_transactions CF.
+      - name: total_l2_gas_used
+        rust_type: "u64"
+        description: "Sum of L2 gas used by all transactions in the block."
+  relationships:
+    - target_cf: block_hash_to_block_n
+      relationship_type: inverse
+      description: "Provides reverse lookup from block hash to this block's number."
+    - target_cf: block_transactions
+      relationship_type: contains
+      description: "Transaction details for tx_hashes are stored in block_transactions."
+    - target_cf: block_state_diff
+      relationship_type: references
+      description: "State changes for this block are stored with the same block_n key."
+
+- name: block_hash_to_block_n
+  category: blocks
+  purpose: |
+    Provides a reverse index from block hash to block number. This enables efficient
+    lookups when only the block hash is known (e.g., from RPC requests or when following
+    parent hash links). Essential for the JSON-RPC API which often receives block hashes
+    from clients.
+
+    This is a point-lookup optimized column family, meaning RocksDB will use hash-based
+    indexing internally for O(1) lookups.
+  key:
+    rust_type: "Felt"
+    encoding: raw
+    size_bytes: 32
+    description: |
+      The block hash as a raw 32-byte big-endian field element. Block hashes in Starknet
+      are 252-bit values computed using Pedersen hashing over block header fields.
+    example_raw: "0x047c3637b57c2b079b93c61539950c17e868a28f46cdef28f88521067f21e943"
+    example_decoded: "Mainnet Block 0 Hash"
+  value:
+    rust_type: "u32"
+    encoding: bincode
+    description: |
+      The block number as a bincode-serialized u32. Using bincode adds minimal overhead
+      (length prefix) but maintains consistency with other serialized values in the codebase.
+    fields:
+      - name: block_n
+        rust_type: "u32"
+        description: "The block number corresponding to this hash."
+  relationships:
+    - target_cf: block_info
+      relationship_type: inverse
+      description: "Maps to the block_info entry containing full block details."
+
+- name: block_state_diff
+  category: blocks
+  purpose: |
+    Stores the state diff (all state changes) for each block. The state diff captures
+    every modification to the blockchain state including: storage updates, contract
+    deployments, class declarations, nonce changes, and class replacements.
+
+    State diffs are critical for: (1) syncing nodes can apply diffs incrementally,
+    (2) computing state commitments by feeding into the Merkle tries, (3) supporting
+    reorgs by allowing state to be reverted, (4) providing data for state update RPC methods.
+
+    This column family is optimized for point lookups by block number.
+  key:
+    rust_type: "u32"
+    encoding: big-endian
+    size_bytes: 4
+    description: |
+      The block number as a 4-byte big-endian unsigned integer. Matches the key format
+      used in block_info for consistency.
+    example_raw: "0x00000001"
+    example_decoded: "Block 1"
+  value:
+    rust_type: "StateDiff"
+    encoding: bincode
+    description: |
+      Contains all state changes that occurred in this block. This is a comprehensive
+      record that can be used to reconstruct state transitions or revert the block.
+    fields:
+      - name: storage_diffs
+        rust_type: "Vec<ContractStorageDiffItem>"
+        description: |
+          List of storage changes per contract. Each item contains a contract address
+          and a list of (key, value) pairs that were modified. Only changed slots are included.
+      - name: deployed_contracts
+        rust_type: "Vec<DeployedContractItem>"
+        description: |
+          New contracts deployed in this block. Each item contains the contract address
+          and the class hash of the deployed contract code.
+      - name: declared_classes
+        rust_type: "Vec<DeclaredClassItem>"
+        description: |
+          New Sierra classes declared in this block. Each item contains the class hash
+          and the corresponding compiled class hash (CASM).
+      - name: old_declared_contracts
+        rust_type: "Vec<Felt>"
+        description: |
+          Legacy Cairo 0 classes declared in this block. These are class hashes only
+          (no compiled class hash as they use the deprecated contract format).
+      - name: replaced_classes
+        rust_type: "Vec<ReplacedClassItem>"
+        description: |
+          Contract class replacements (upgrades). Each item contains the contract address
+          and the new class hash. The contract's logic changes but address remains the same.
+      - name: nonces
+        rust_type: "Vec<NonceUpdate>"
+        description: |
+          Nonce updates for accounts. Each item contains a contract address and its new nonce.
+          Nonces increment with each transaction from an account to prevent replay attacks.
+      - name: migrated_compiled_classes
+        rust_type: "Vec<MigratedCompiledClass>"
+        description: |
+          SNIP-34 migration records. When classes are migrated to use new compiled class
+          hash format (BLAKE), this records the class_hash and new compiled_class_hash.
+  relationships:
+    - target_cf: block_info
+      relationship_type: references
+      description: "Block info at the same block_n provides context (timestamp, sequencer, etc.)."
+    - target_cf: contract_storage
+      relationship_type: indexed_by
+      description: "Storage diffs are applied to create entries in contract_storage."
+    - target_cf: contract_nonces
+      relationship_type: indexed_by
+      description: "Nonce updates are applied to create entries in contract_nonces."
+    - target_cf: contract_class_hashes
+      relationship_type: indexed_by
+      description: "Deployments and replacements update contract_class_hashes entries."
+
+- name: block_bouncer_weight
+  category: blocks
+  purpose: |
+    Stores the resource usage (bouncer weights) for each block. The bouncer is Madara's
+    resource limiter that tracks various resource metrics during block production to ensure
+    blocks don't exceed protocol limits. These weights are stored for analytics, debugging,
+    and to support future features like fee market analysis.
+
+    This data is primarily useful for sequencer nodes and for understanding block utilization.
+  key:
+    rust_type: "u32"
+    encoding: big-endian
+    size_bytes: 4
+    description: |
+      The block number as a 4-byte big-endian unsigned integer. Uses prefix extraction
+      of 4 bytes for RocksDB optimization.
+    example_raw: "0x00000001"
+    example_decoded: "Block 1"
+  value:
+    rust_type: "BouncerWeights"
+    encoding: bincode
+    description: |
+      Resource weights tracked by the bouncer during block production. These represent
+      actual resource consumption, not limits.
+    fields:
+      - name: builtin_count
+        rust_type: "BuiltinCount"
+        description: |
+          Count of each Cairo builtin used: pedersen, range_check, ecdsa, bitwise, ec_op,
+          keccak, poseidon, segment_arena, add_mod, mul_mod, range_check96.
+      - name: gas
+        rust_type: "usize"
+        description: "Total gas consumed by transactions in this block."
+      - name: message_segment_length
+        rust_type: "usize"
+        description: "Total length of L1 message segments in the block."
+      - name: n_events
+        rust_type: "usize"
+        description: "Total number of events emitted by all transactions."
+      - name: n_steps
+        rust_type: "usize"
+        description: "Total number of Cairo VM steps executed."
+      - name: state_diff_size
+        rust_type: "usize"
+        description: "Size of the state diff in storage units."
+  relationships:
+    - target_cf: block_info
+      relationship_type: references
+      description: "Links to the block at the same block number."

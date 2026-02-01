@@ -1,0 +1,96 @@
+# Mempool Category - Column Family for Pending Transaction Storage
+#
+# The mempool stores validated transactions that are waiting to be included in a block.
+# Transactions enter the mempool after passing validation (signature, nonce, fee checks)
+# and remain until they are either:
+# 1. Included in a block (removed from mempool)
+# 2. Expired or invalidated (removed from mempool)
+# 3. Replaced by a higher-fee transaction with the same nonce
+
+- name: mempool_transactions
+  category: mempool
+  purpose: |
+    Stores validated transactions waiting to be included in blocks. This column family
+    persists the mempool to disk, allowing transaction recovery after node restarts.
+    The sequencer reads from this when building blocks, selecting transactions based
+    on gas price and other prioritization rules.
+
+    Transactions are keyed by their hash for efficient removal when included in blocks.
+    The full ValidatedTransaction is stored, which includes the original transaction
+    plus validation metadata (account nonce at validation time, etc.).
+
+    This is a point-lookup optimized column family.
+  key:
+    rust_type: "Felt"
+    encoding: bincode
+    size_bytes: null
+    description: |
+      The transaction hash serialized with bincode. While transaction hashes are 32-byte
+      Felts, bincode adds a small prefix. Keying by hash enables O(1) removal when
+      transactions are included in blocks.
+    example_raw: "0x<bincode-serialized transaction hash>"
+    example_decoded: "Transaction hash 0x07d2..."
+  value:
+    rust_type: "ValidatedTransaction"
+    encoding: bincode
+    description: |
+      A fully validated transaction ready for inclusion in a block. Contains both the
+      transaction data and validation metadata collected during initial validation.
+    fields:
+      - name: transaction
+        rust_type: "Transaction"
+        description: |
+          The underlying transaction (Invoke, Declare, DeployAccount, or L1Handler).
+          Contains all transaction data: sender, calldata, signature, nonce, etc.
+      - name: hash
+        rust_type: "Felt"
+        description: |
+          The transaction hash. Stored redundantly for quick access without
+          recomputing from transaction data.
+      - name: sender_address
+        rust_type: "Felt"
+        description: |
+          The account address that signed/sent this transaction. Used for nonce
+          management and account-based prioritization.
+      - name: nonce
+        rust_type: "Felt"
+        description: |
+          The nonce used by this transaction. Must match the account's current
+          nonce at execution time.
+      - name: max_fee
+        rust_type: "Fee"
+        description: |
+          Maximum fee the sender is willing to pay. Used for transaction
+          prioritization and gas limit enforcement.
+      - name: tip
+        rust_type: "u64"
+        description: |
+          Optional priority tip (for v3 transactions). Higher tips get
+          prioritized during block production.
+      - name: resource_bounds
+        rust_type: "ResourceBoundsMapping"
+        description: |
+          Resource limits for v3 transactions. Specifies max amount and price
+          per unit for L1_GAS, L2_GAS, and L1_DATA.
+      - name: only_query
+        rust_type: "bool"
+        description: |
+          If true, this is a simulation-only transaction that should not be
+          included in blocks.
+      - name: class_info
+        rust_type: "Option<ConvertedClass>"
+        description: |
+          For Declare transactions, the class being declared. Stored here to
+          avoid re-fetching during execution.
+      - name: deployed_address
+        rust_type: "Option<Felt>"
+        description: |
+          For DeployAccount transactions, the address that will be deployed.
+          Pre-computed for validation.
+  relationships:
+    - target_cf: block_transactions
+      relationship_type: references
+      description: "When included in a block, transaction moves to block_transactions."
+    - target_cf: tx_hash_to_index
+      relationship_type: references
+      description: "After inclusion, hash is indexed in tx_hash_to_index."

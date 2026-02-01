@@ -13,3 +13,4 @@ tower-http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }
+hex = "0.4"

@@ -1,0 +1,132 @@
+# Contracts Category - Column Families for Contract State
+#
+# These column families store the current state of contracts: their storage slots,
+# nonces, and class hashes. The design uses a historical versioning scheme where
+# each state change is stored with its block number, enabling point-in-time queries
+# at any historical block.
+#
+# Key Design: All contract state columns use a special key encoding where the block
+# number is stored as (u32::MAX - block_n) to enable forward iteration to find the
+# most recent value at or before a given block. This clever encoding means iterating
+# forward finds the chronologically most recent entry first.
+
+- name: contract_storage
+  category: contracts
+  purpose: |
+    Stores contract storage slot values with historical versioning. Each storage write
+    creates a new entry with the block number, allowing queries for the storage value
+    at any historical block. This is essential for: (1) serving historical RPC queries,
+    (2) supporting state proofs at any block, (3) enabling block re-execution.
+
+    The prefix extractor (64 bytes = contract address + storage key) enables efficient
+    iteration over all versions of a specific storage slot. Uses the "contracts" memory
+    budget tier for RocksDB optimization.
+  key:
+    rust_type: "(Felt, Felt, u32)"
+    encoding: composite
+    size_bytes: 68
+    description: |
+      Composite key: contract_address (32 bytes BE) + storage_key (32 bytes BE) +
+      reversed_block_n (4 bytes BE). The block number is stored as (u32::MAX - block_n)
+      so that iterating forward returns the most recent block first. This enables
+      efficient "find value at block N" queries by seeking to the prefix and taking
+      the first result.
+    example_raw: "0x<32-byte address><32-byte key><4-byte reversed block_n>"
+    example_decoded: "Contract 0x049d...at key 0x0000...0001 at block 100"
+  value:
+    rust_type: "Felt"
+    encoding: bincode
+    description: |
+      The storage slot value as a 252-bit field element. Storage values in Starknet
+      can be any valid Felt. Zero values are significant and stored (not deleted).
+    fields:
+      - name: value
+        rust_type: "Felt"
+        description: "The value stored at this (contract, key) pair at this block."
+  relationships:
+    - target_cf: block_state_diff
+      relationship_type: indexed_by
+      description: "Storage diffs in block_state_diff create entries in this CF."
+    - target_cf: bonsai_contract_storage_trie
+      relationship_type: references
+      description: "Storage values are leaves in the contract storage trie for state proofs."
+
+- name: contract_nonces
+  category: contracts
+  purpose: |
+    Stores account nonces with historical versioning. Nonces are critical for transaction
+    ordering and replay protection - each transaction from an account must use the next
+    sequential nonce. Like contract_storage, this supports historical queries.
+
+    Uses 32-byte prefix extraction (contract address) to efficiently query nonce history
+    for a specific account. Uses the "contracts" memory budget tier.
+  key:
+    rust_type: "(Felt, u32)"
+    encoding: composite
+    size_bytes: 36
+    description: |
+      Composite key: contract_address (32 bytes BE) + reversed_block_n (4 bytes BE).
+      Block number encoding uses (u32::MAX - block_n) for efficient historical lookups.
+    example_raw: "0x<32-byte address><4-byte reversed block_n>"
+    example_decoded: "Account 0x049d... nonce at block 100"
+  value:
+    rust_type: "Felt"
+    encoding: bincode
+    description: |
+      The account nonce as a Felt. While conceptually an integer, Starknet uses Felt
+      for nonces to maintain consistency with other state values.
+    fields:
+      - name: nonce
+        rust_type: "Felt"
+        description: |
+          The nonce value. Starts at 0 for new accounts and increments with each
+          transaction. Declared classes also have nonces.
+  relationships:
+    - target_cf: block_state_diff
+      relationship_type: indexed_by
+      description: "Nonce updates in block_state_diff create entries in this CF."
+    - target_cf: bonsai_contract_trie
+      relationship_type: references
+      description: "Nonces are part of the contract state hash in the contracts trie."
+
+- name: contract_class_hashes
+  category: contracts
+  purpose: |
+    Stores the class hash associated with each contract address, with historical versioning.
+    The class hash determines what code a contract executes. This can change through
+    contract upgrades (class replacement). Historical versioning enables queries about
+    what code a contract was running at any past block.
+
+    Uses 32-byte prefix extraction (contract address) for efficient history queries.
+    Uses the "contracts" memory budget tier.
+  key:
+    rust_type: "(Felt, u32)"
+    encoding: composite
+    size_bytes: 36
+    description: |
+      Composite key: contract_address (32 bytes BE) + reversed_block_n (4 bytes BE).
+      The reversed block number encoding enables efficient historical lookups.
+    example_raw: "0x<32-byte address><4-byte reversed block_n>"
+    example_decoded: "Contract 0x049d... class at block 100"
+  value:
+    rust_type: "Felt"
+    encoding: bincode
+    description: |
+      The class hash that this contract uses. This hash can be used to look up the
+      actual contract code in the class_info column family.
+    fields:
+      - name: class_hash
+        rust_type: "Felt"
+        description: |
+          The 252-bit class hash. For deployed contracts, this links to either a
+          Sierra class (declared_classes) or Legacy Cairo 0 class (old_declared_contracts).
+  relationships:
+    - target_cf: class_info
+      relationship_type: references
+      description: "The class_hash value can be looked up in class_info to get the code."
+    - target_cf: block_state_diff
+      relationship_type: indexed_by
+      description: "Deploy and replace operations in state diffs create entries here."
+    - target_cf: bonsai_contract_trie
+      relationship_type: references
+      description: "Class hash is part of the contract state hash in the contracts trie."

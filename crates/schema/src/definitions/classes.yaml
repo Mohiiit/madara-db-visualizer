@@ -1,0 +1,107 @@
+# Classes Category - Column Families for Contract Class Storage
+#
+# These column families store Cairo contract classes (code). Classes are immutable
+# once declared and are referenced by their hash. There are two types:
+# - Sierra classes: Modern Cairo 1+ classes with type safety
+# - Legacy classes: Cairo 0 classes (deprecated but still supported)
+#
+# Classes are stored separately from contracts because multiple contracts can
+# share the same class (code reuse), and classes need to be looked up by their
+# hash for execution.
+
+- name: class_info
+  category: classes
+  purpose: |
+    Stores complete class information including the contract code. This is the primary
+    storage for contract classes and contains everything needed to execute a contract:
+    the class definition, ABI, Sierra program (for Cairo 1+), and compiled class hash.
+
+    This column family is optimized for point lookups by class hash. When executing
+    a transaction, the class is loaded from here using the class hash found in
+    contract_class_hashes.
+
+    Classes are stored with the block number they were declared in, which is useful
+    for debugging and understanding when a class became available.
+  key:
+    rust_type: "Felt"
+    encoding: raw
+    size_bytes: 32
+    description: |
+      The class hash as a raw 32-byte big-endian field element. Class hashes are
+      computed deterministically from the class definition, ensuring the same code
+      always produces the same hash (content-addressable storage).
+    example_raw: "0x<32-byte class hash>"
+    example_decoded: "Class hash 0x029d..."
+  value:
+    rust_type: "ClassInfoWithBlockN"
+    encoding: bincode
+    description: |
+      Contains the class definition and metadata about when it was declared.
+      The ClassInfo enum handles both Sierra and Legacy class formats.
+    fields:
+      - name: class_info
+        rust_type: "ClassInfo (enum)"
+        description: |
+          Either Sierra or Legacy class info. Sierra classes contain: sierra_program
+          (the Cairo AST), abi (JSON ABI), sierra_version, compiled_class_hash (CASM hash),
+          and optionally compiled_class_hash_v2 (BLAKE hash for SNIP-34). Legacy classes
+          contain the raw Cairo 0 contract definition.
+      - name: block_number
+        rust_type: "u64"
+        description: "The block number in which this class was declared."
+  relationships:
+    - target_cf: contract_class_hashes
+      relationship_type: indexed_by
+      description: "Contracts reference classes by their hash stored in contract_class_hashes."
+    - target_cf: class_compiled
+      relationship_type: references
+      description: "Sierra classes have their compiled CASM stored in class_compiled."
+    - target_cf: block_state_diff
+      relationship_type: indexed_by
+      description: "Class declarations in state diffs create entries here."
+    - target_cf: bonsai_class_trie
+      relationship_type: references
+      description: "Class hashes are included in the class trie for state commitment."
+
+- name: class_compiled
+  category: classes
+  purpose: |
+    Stores compiled Sierra classes (CASM bytecode). When a Sierra class is declared,
+    it must be compiled to CASM (Cairo Assembly) for execution. This compilation is
+    expensive, so the result is cached here.
+
+    The key is the compiled class hash, which is deterministically derived from the
+    CASM. This enables verification that the stored CASM matches the declared
+    compiled class hash.
+
+    Note: Legacy Cairo 0 classes don't have separate compiled storage as they are
+    already in their executable format.
+  key:
+    rust_type: "Felt"
+    encoding: raw
+    size_bytes: 32
+    description: |
+      The compiled class hash as a raw 32-byte field element. For Sierra classes,
+      this is computed by hashing the CASM representation. May be either the original
+      compiled_class_hash or the SNIP-34 compiled_class_hash_v2 (BLAKE).
+    example_raw: "0x<32-byte compiled class hash>"
+    example_decoded: "Compiled class hash 0x03fa..."
+  value:
+    rust_type: "CompiledSierraWithBlockN"
+    encoding: bincode
+    description: |
+      Contains the compiled CASM bytecode and metadata. This is what actually gets
+      executed by the Cairo VM when invoking the contract.
+    fields:
+      - name: compiled_sierra
+        rust_type: "CompiledSierra"
+        description: |
+          The compiled CASM (Cairo Assembly) code. Contains the bytecode, entry points
+          (external, l1_handler, constructor), and hints needed for execution.
+      - name: block_number
+        rust_type: "u64"
+        description: "The block number when this compiled class was stored."
+  relationships:
+    - target_cf: class_info
+      relationship_type: references
+      description: "Sierra classes in class_info reference their compiled code here."

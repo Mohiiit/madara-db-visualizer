@@ -1,0 +1,316 @@
+# Bonsai Tries Category - Merkle Patricia Trie Column Families
+#
+# Madara uses Bonsai tries (Merkle Patricia Tries) to compute the global state root
+# that commits to all blockchain state. There are three main tries:
+#
+# 1. Contract Trie: Maps contract addresses to their state hash (nonce + class_hash + storage_root)
+# 2. Contract Storage Trie: Maps (contract_address, storage_key) to storage values
+# 3. Class Trie: Maps class hashes to their compiled class hashes
+#
+# Each trie has three column families:
+# - Flat: Direct key-value storage for leaf values
+# - Trie: Internal trie nodes (branch and edge nodes)
+# - Log: Change logs for efficient reversion and historical access
+#
+# The tries use 251-bit keys (Starknet field element size) and are based on the
+# Starknet state commitment scheme using Pedersen hash (contracts/storage) and
+# Poseidon hash (classes).
+
+- name: bonsai_contract_flat
+  category: tries
+  purpose: |
+    Stores flat (direct) key-value mappings for the contract trie leaves. This provides
+    O(1) access to contract state hashes without traversing the trie structure. The flat
+    storage is used for reads while the trie structure is used for computing Merkle proofs.
+
+    In the Bonsai trie design, flat storage complements the trie structure to optimize
+    for different access patterns: flat for direct reads, trie for proofs.
+  key:
+    rust_type: "DatabaseKey::Flat"
+    encoding: raw
+    size_bytes: null
+    description: |
+      Bonsai flat key format. Contains the identifier (contract address as bytes) prefixed
+      with a flat key marker. The exact format is determined by the Bonsai trie library.
+    example_raw: "0x00<contract_address_bytes>"
+    example_decoded: "Flat key for contract 0x049d..."
+  value:
+    rust_type: "ByteVec"
+    encoding: raw
+    description: |
+      The contract state hash - a single Felt computed as:
+      h(h(h(class_hash, storage_root), nonce), 0)
+      where h is Pedersen hash. This commits to the contract's full state.
+    fields:
+      - name: contract_state_hash
+        rust_type: "Felt"
+        description: "Pedersen hash committing to class_hash, storage_root, and nonce."
+  relationships:
+    - target_cf: bonsai_contract_trie
+      relationship_type: references
+      description: "Values here are leaves in the contract trie structure."
+    - target_cf: contract_class_hashes
+      relationship_type: references
+      description: "The class_hash component comes from contract_class_hashes."
+    - target_cf: contract_nonces
+      relationship_type: references
+      description: "The nonce component comes from contract_nonces."
+    - target_cf: bonsai_contract_storage_trie
+      relationship_type: references
+      description: "The storage_root is the root of the contract's storage trie."
+
+- name: bonsai_contract_trie
+  category: tries
+  purpose: |
+    Stores the internal trie nodes (branch and edge nodes) for the contract trie.
+    This is the Merkle Patricia Trie structure that enables computing proofs for
+    contract state. The root of this trie, combined with the class trie root,
+    forms the global state commitment.
+
+    Uses Pedersen hash for internal node computation (Starknet's original design).
+    The trie has height 251 (matching Starknet field element bit length).
+  key:
+    rust_type: "DatabaseKey::Trie"
+    encoding: raw
+    size_bytes: null
+    description: |
+      Bonsai trie key format. Contains the node path/identifier prefixed with a trie
+      key marker. Internal nodes are identified by their position in the trie.
+    example_raw: "0x01<node_path_bytes>"
+    example_decoded: "Trie node at path 0x..."
+  value:
+    rust_type: "ByteVec"
+    encoding: raw
+    description: |
+      Serialized trie node. Can be either:
+      - Branch node: Contains hashes of two child nodes
+      - Edge node: Contains a path segment and a child hash (compressed path)
+    fields:
+      - name: node
+        rust_type: "TrieNode"
+        description: "Branch or edge node with child references and path information."
+  relationships:
+    - target_cf: bonsai_contract_flat
+      relationship_type: contains
+      description: "Leaf values in flat storage are referenced by trie leaf nodes."
+    - target_cf: bonsai_contract_log
+      relationship_type: references
+      description: "Changes to trie nodes are recorded in the log for reversion."
+
+- name: bonsai_contract_log
+  category: tries
+  purpose: |
+    Stores change logs for the contract trie, enabling efficient state reversion
+    and historical state access. Each commit creates log entries recording what
+    changed, allowing the trie to be rolled back to any previous state.
+
+    This is essential for: (1) handling chain reorganizations (reorgs), (2) providing
+    historical state proofs, (3) supporting the snapshot mechanism for efficient reads.
+  key:
+    rust_type: "DatabaseKey::TrieLog"
+    encoding: raw
+    size_bytes: null
+    description: |
+      Bonsai trie log key format. Contains the commit ID (block number) and change
+      type, prefixed with a log key marker.
+    example_raw: "0x02<commit_id><change_marker>"
+    example_decoded: "Log entry for block 100"
+  value:
+    rust_type: "ByteVec"
+    encoding: raw
+    description: |
+      Serialized change record. Contains information about what was inserted,
+      modified, or deleted at this commit point.
+    fields:
+      - name: change
+        rust_type: "TrieLogEntry"
+        description: "Records the previous value (for reversion) and change type."
+  relationships:
+    - target_cf: bonsai_contract_trie
+      relationship_type: references
+      description: "Log entries reference trie nodes that were modified."
+
+- name: bonsai_contract_storage_flat
+  category: tries
+  purpose: |
+    Stores flat key-value mappings for contract storage trie leaves. Each contract
+    has its own storage trie (conceptually), but they're stored together with the
+    contract address as a key prefix. The flat storage enables direct O(1) reads
+    of storage values.
+  key:
+    rust_type: "DatabaseKey::Flat"
+    encoding: raw
+    size_bytes: null
+    description: |
+      Bonsai flat key for storage. Contains contract address + storage key, prefixed
+      with a flat key marker. The composite key enables per-contract storage isolation.
+    example_raw: "0x00<contract_address><storage_key>"
+    example_decoded: "Storage key 0x0001 of contract 0x049d..."
+  value:
+    rust_type: "ByteVec"
+    encoding: raw
+    description: |
+      The storage value as raw bytes (a Felt). Storage values in Starknet are
+      252-bit field elements.
+    fields:
+      - name: storage_value
+        rust_type: "Felt"
+        description: "The value stored at this (contract, key) pair."
+  relationships:
+    - target_cf: bonsai_contract_storage_trie
+      relationship_type: references
+      description: "Values are leaves in the storage trie structure."
+    - target_cf: contract_storage
+      relationship_type: references
+      description: "Historical storage values are also stored in contract_storage."
+
+- name: bonsai_contract_storage_trie
+  category: tries
+  purpose: |
+    Stores internal trie nodes for contract storage tries. Each contract has its
+    own storage trie with the root hash being part of the contract's state commitment.
+    Uses Pedersen hash like the contract trie.
+  key:
+    rust_type: "DatabaseKey::Trie"
+    encoding: raw
+    size_bytes: null
+    description: |
+      Bonsai trie key for storage nodes. Contains the trie path prefixed by contract
+      address to isolate per-contract storage.
+    example_raw: "0x01<contract_address><node_path>"
+    example_decoded: "Storage trie node for contract 0x049d..."
+  value:
+    rust_type: "ByteVec"
+    encoding: raw
+    description: |
+      Serialized trie node (branch or edge). Same format as contract trie nodes.
+    fields:
+      - name: node
+        rust_type: "TrieNode"
+        description: "Branch or edge node for the storage trie."
+  relationships:
+    - target_cf: bonsai_contract_storage_flat
+      relationship_type: contains
+      description: "Leaf values are in flat storage."
+    - target_cf: bonsai_contract_storage_log
+      relationship_type: references
+      description: "Changes are recorded in the storage log."
+    - target_cf: bonsai_contract_flat
+      relationship_type: indexed_by
+      description: "Storage trie roots become part of contract state hashes."
+
+- name: bonsai_contract_storage_log
+  category: tries
+  purpose: |
+    Stores change logs for contract storage tries. Enables reversion of storage
+    state during reorgs and historical access for state proofs.
+  key:
+    rust_type: "DatabaseKey::TrieLog"
+    encoding: raw
+    size_bytes: null
+    description: |
+      Log key containing commit ID (block number), contract address, and change marker.
+    example_raw: "0x02<commit_id><contract_address><change_marker>"
+    example_decoded: "Storage log for contract 0x049d... at block 100"
+  value:
+    rust_type: "ByteVec"
+    encoding: raw
+    description: |
+      Change record for storage trie nodes.
+    fields:
+      - name: change
+        rust_type: "TrieLogEntry"
+        description: "Records previous value and change type for reversion."
+  relationships:
+    - target_cf: bonsai_contract_storage_trie
+      relationship_type: references
+      description: "References storage trie nodes that were modified."
+
+- name: bonsai_class_flat
+  category: tries
+  purpose: |
+    Stores flat key-value mappings for class trie leaves. Maps class hashes to their
+    "class commitment" (a hash of class_hash and compiled_class_hash).
+  key:
+    rust_type: "DatabaseKey::Flat"
+    encoding: raw
+    size_bytes: null
+    description: |
+      Class hash as the flat key, prefixed with flat key marker.
+    example_raw: "0x00<class_hash_bytes>"
+    example_decoded: "Flat key for class 0x029d..."
+  value:
+    rust_type: "ByteVec"
+    encoding: raw
+    description: |
+      The class commitment hash: poseidon(CLASS_HASH_PREFIX, class_hash, compiled_class_hash).
+      This commits to both the class identity and its compiled form.
+    fields:
+      - name: class_commitment
+        rust_type: "Felt"
+        description: "Poseidon hash of class_hash and compiled_class_hash."
+  relationships:
+    - target_cf: bonsai_class_trie
+      relationship_type: references
+      description: "Commitments are leaves in the class trie."
+    - target_cf: class_info
+      relationship_type: references
+      description: "Class hash and compiled_class_hash come from class_info."
+
+- name: bonsai_class_trie
+  category: tries
+  purpose: |
+    Stores internal trie nodes for the class trie. This trie commits to all declared
+    classes and uses Poseidon hash (unlike contracts/storage which use Pedersen).
+    The class trie root is combined with the contract trie root to form the global
+    state root.
+  key:
+    rust_type: "DatabaseKey::Trie"
+    encoding: raw
+    size_bytes: null
+    description: |
+      Trie node path prefixed with trie key marker.
+    example_raw: "0x01<node_path_bytes>"
+    example_decoded: "Class trie node at path 0x..."
+  value:
+    rust_type: "ByteVec"
+    encoding: raw
+    description: |
+      Serialized trie node. Uses Poseidon hash for internal computations.
+    fields:
+      - name: node
+        rust_type: "TrieNode"
+        description: "Branch or edge node for the class trie."
+  relationships:
+    - target_cf: bonsai_class_flat
+      relationship_type: contains
+      description: "Leaf values are in class flat storage."
+    - target_cf: bonsai_class_log
+      relationship_type: references
+      description: "Changes recorded in class log."
+
+- name: bonsai_class_log
+  category: tries
+  purpose: |
+    Stores change logs for the class trie. Enables reversion during reorgs.
+  key:
+    rust_type: "DatabaseKey::TrieLog"
+    encoding: raw
+    size_bytes: null
+    description: |
+      Log key with commit ID and change marker.
+    example_raw: "0x02<commit_id><change_marker>"
+    example_decoded: "Class log at block 100"
+  value:
+    rust_type: "ByteVec"
+    encoding: raw
+    description: |
+      Change record for class trie nodes.
+    fields:
+      - name: change
+        rust_type: "TrieLogEntry"
+        description: "Records previous value for reversion."
+  relationships:
+    - target_cf: bonsai_class_trie
+      relationship_type: references
+      description: "References class trie nodes that were modified."

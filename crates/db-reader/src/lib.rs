@@ -7,12 +7,14 @@ use thiserror::Error;
 pub mod blocks;
 pub mod contracts;
 mod queries;
+pub mod raw;
 pub mod state_diff;
 pub mod transactions;
 
 pub use blocks::*;
 pub use contracts::*;
 pub use queries::*;
+pub use raw::*;
 pub use state_diff::*;
 pub use transactions::*;
 

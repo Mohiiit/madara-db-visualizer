@@ -251,3 +251,44 @@ pub struct FilteredContractsResponse {
     pub contracts: Vec<ContractResponse>,
     pub total: usize,
 }
+
+// Raw column family browsing types
+
+/// Information about a column family
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnFamilyInfo {
+    pub name: String,
+    pub key_count: usize,
+}
+
+/// Response listing all column families
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnFamilyListResponse {
+    pub column_families: Vec<ColumnFamilyInfo>,
+}
+
+/// Statistics for a single column family
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnFamilyStats {
+    pub name: String,
+    pub key_count: usize,
+    pub first_key_hex: Option<String>,
+    pub last_key_hex: Option<String>,
+}
+
+/// Information about a single key
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyInfo {
+    pub raw_hex: String,
+}
+
+/// Response listing keys in a column family with pagination
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyListResponse {
+    pub cf_name: String,
+    pub keys: Vec<KeyInfo>,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub has_more: bool,
+}

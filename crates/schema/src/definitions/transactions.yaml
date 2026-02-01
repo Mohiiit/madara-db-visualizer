@@ -1,0 +1,95 @@
+# Transactions Category - Column Families for Transaction Storage
+#
+# These column families store transaction data and provide efficient lookups
+# by transaction hash. Transactions are stored per-block with receipts included,
+# enabling efficient block-based queries while also supporting direct tx hash lookups.
+
+- name: block_transactions
+  category: transactions
+  purpose: |
+    Stores individual transactions with their receipts, indexed by block number and
+    transaction index within the block. This is the primary storage for transaction data
+    and enables efficient iteration over all transactions in a block.
+
+    The key uses a composite format with block number as a prefix, allowing RocksDB's
+    prefix extraction to efficiently scan all transactions in a specific block without
+    reading other blocks. This is essential for block production, syncing, and serving
+    RPC requests like `getBlockWithTxs`.
+
+    Uses the "blocks" memory budget tier for priority caching.
+  key:
+    rust_type: "(u32, u16)"
+    encoding: composite
+    size_bytes: 6
+    description: |
+      Composite key of block number (4 bytes BE) + transaction index (2 bytes BE).
+      The prefix extractor is set to 4 bytes (block number), enabling efficient
+      prefix scans for all transactions in a block. Transaction index is limited
+      to u16::MAX (65,535) transactions per block.
+    example_raw: "0x000000010002"
+    example_decoded: "Block 1, Transaction 2"
+  value:
+    rust_type: "TransactionWithReceipt"
+    encoding: bincode
+    description: |
+      Contains both the transaction data and its execution receipt. This denormalized
+      storage means a single read retrieves everything needed to serve transaction queries.
+    fields:
+      - name: transaction
+        rust_type: "Transaction"
+        description: |
+          The transaction data including: type (invoke, declare, deploy_account, l1_handler),
+          version, sender address, calldata, signature, nonce, and type-specific fields.
+          Supports all Starknet transaction types.
+      - name: receipt
+        rust_type: "TransactionReceipt"
+        description: |
+          Execution receipt containing: transaction hash, actual fee paid, execution status
+          (succeeded/reverted), messages sent to L1, events emitted, execution resources used,
+          and revert reason if applicable.
+  relationships:
+    - target_cf: tx_hash_to_index
+      relationship_type: indexed_by
+      description: "Transaction hashes are indexed in tx_hash_to_index for direct lookups."
+    - target_cf: block_info
+      relationship_type: references
+      description: "Block info contains the list of transaction hashes for validation."
+
+- name: tx_hash_to_index
+  category: transactions
+  purpose: |
+    Provides a reverse index from transaction hash to its location (block number and
+    transaction index). This enables efficient O(1) lookups when a client provides
+    only the transaction hash, which is the common case for RPC methods like
+    `getTransactionByHash` and `getTransactionReceipt`.
+
+    This is a point-lookup optimized column family with hash-based indexing.
+  key:
+    rust_type: "Felt"
+    encoding: raw
+    size_bytes: 32
+    description: |
+      The transaction hash as a raw 32-byte big-endian field element. Transaction hashes
+      in Starknet are 252-bit values computed by hashing transaction data with Pedersen hash.
+    example_raw: "0x01d234..."
+    example_decoded: "Transaction hash (252-bit Felt)"
+  value:
+    rust_type: "(u32, u16)"
+    encoding: bincode
+    description: |
+      The location of the transaction encoded as a tuple of (block_number, tx_index).
+      This provides the exact position to look up in block_transactions.
+    fields:
+      - name: block_number
+        rust_type: "u32"
+        description: "The block number containing this transaction."
+      - name: transaction_index
+        rust_type: "u16"
+        description: "Zero-based index of the transaction within the block."
+  relationships:
+    - target_cf: block_transactions
+      relationship_type: references
+      description: "The value points to the exact location in block_transactions."
+    - target_cf: block_info
+      relationship_type: references
+      description: "Block info at block_number provides context about the block."
