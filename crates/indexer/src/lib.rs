@@ -1092,4 +1092,238 @@ impl Indexer {
         }
         Ok(results)
     }
+
+    // SQL Query Execution API
+
+    /// Maximum number of rows returned by a query
+    const MAX_RESULT_ROWS: usize = 1000;
+
+    /// Query timeout in seconds
+    const QUERY_TIMEOUT_SECS: u32 = 5;
+
+    /// List of indexed tables
+    const INDEXED_TABLES: &'static [&'static str] = &[
+        "blocks",
+        "transactions",
+        "events",
+        "storage_updates",
+        "deployed_contracts",
+        "classes",
+        "contracts",
+        "index_status",
+    ];
+
+    /// Check if a SQL statement is a safe SELECT query
+    fn is_safe_select(sql: &str) -> bool {
+        let sql_upper = sql.trim().to_uppercase();
+
+        // Must start with SELECT
+        if !sql_upper.starts_with("SELECT") {
+            return false;
+        }
+
+        // Check for forbidden keywords that could modify data
+        let forbidden = [
+            "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER",
+            "TRUNCATE", "REPLACE", "ATTACH", "DETACH", "PRAGMA",
+            "VACUUM", "REINDEX", "GRANT", "REVOKE", "BEGIN", "COMMIT",
+            "ROLLBACK", "SAVEPOINT", "RELEASE",
+        ];
+
+        for keyword in forbidden {
+            // Check for the keyword as a word boundary (not part of a column name)
+            if sql_upper.contains(&format!(" {} ", keyword))
+                || sql_upper.contains(&format!(" {};", keyword))
+                || sql_upper.contains(&format!("({})", keyword))
+                || sql_upper.starts_with(&format!("{} ", keyword))
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Execute a raw SQL SELECT query with parameters
+    ///
+    /// # Safety
+    /// - Only SELECT statements are allowed
+    /// - Results are limited to MAX_RESULT_ROWS
+    /// - Query timeout is enforced
+    pub fn execute_raw_query_with_params(
+        &self,
+        sql: &str,
+        params: &[&str],
+    ) -> Result<QueryExecutionResult, String> {
+        // Safety check: only allow SELECT
+        if !Self::is_safe_select(sql) {
+            return Err("Only SELECT statements are allowed".to_string());
+        }
+
+        // Set query timeout
+        self.conn
+            .busy_timeout(std::time::Duration::from_secs(Self::QUERY_TIMEOUT_SECS as u64))
+            .map_err(|e| format!("Failed to set timeout: {}", e))?;
+
+        // Prepare the statement
+        let mut stmt = self.conn.prepare(sql).map_err(|e| format!("SQL error: {}", e))?;
+
+        // Get column information
+        let column_count = stmt.column_count();
+        let columns: Vec<String> = (0..column_count)
+            .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
+            .collect();
+
+        // Build params for rusqlite
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+
+        // Execute the query
+        let mut rows_result = stmt
+            .query(params_refs.as_slice())
+            .map_err(|e| format!("Query execution error: {}", e))?;
+
+        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+        let mut truncated = false;
+
+        while let Some(row) = rows_result.next().map_err(|e| format!("Row fetch error: {}", e))? {
+            if result_rows.len() >= Self::MAX_RESULT_ROWS {
+                truncated = true;
+                break;
+            }
+
+            let mut row_data: Vec<serde_json::Value> = Vec::with_capacity(column_count);
+            for i in 0..column_count {
+                let value = match row.get_ref(i) {
+                    Ok(rusqlite::types::ValueRef::Null) => serde_json::Value::Null,
+                    Ok(rusqlite::types::ValueRef::Integer(n)) => serde_json::Value::Number(n.into()),
+                    Ok(rusqlite::types::ValueRef::Real(f)) => {
+                        serde_json::Number::from_f64(f)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null)
+                    }
+                    Ok(rusqlite::types::ValueRef::Text(t)) => {
+                        serde_json::Value::String(String::from_utf8_lossy(t).to_string())
+                    }
+                    Ok(rusqlite::types::ValueRef::Blob(b)) => {
+                        serde_json::Value::String(format!("0x{}", hex::encode(b)))
+                    }
+                    Err(_) => serde_json::Value::Null,
+                };
+                row_data.push(value);
+            }
+            result_rows.push(row_data);
+        }
+
+        let row_count = result_rows.len();
+
+        Ok(QueryExecutionResult {
+            columns,
+            rows: result_rows,
+            row_count,
+            truncated,
+        })
+    }
+
+    /// Get the schema of a specific table
+    pub fn get_table_schema(&self, table: &str) -> Option<TableSchema> {
+        // Validate table name against allowed tables
+        if !Self::INDEXED_TABLES.contains(&table) {
+            return None;
+        }
+
+        // Get table info using PRAGMA
+        let sql = format!("PRAGMA table_info({})", table);
+        let mut stmt = self.conn.prepare(&sql).ok()?;
+
+        let columns_result = stmt.query_map([], |row| {
+            Ok(ColumnSchema {
+                name: row.get(1)?,      // name is at index 1
+                data_type: row.get(2)?, // type is at index 2
+            })
+        });
+
+        match columns_result {
+            Ok(rows) => {
+                let columns: Vec<ColumnSchema> = rows.filter_map(|r| r.ok()).collect();
+                if columns.is_empty() {
+                    None
+                } else {
+                    Some(TableSchema {
+                        name: table.to_string(),
+                        columns,
+                    })
+                }
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// List all indexed tables with their row counts
+    pub fn list_tables(&self) -> Vec<TableWithCount> {
+        let mut tables = Vec::new();
+
+        for &table_name in Self::INDEXED_TABLES {
+            // Skip index_status as it's internal
+            if table_name == "index_status" {
+                continue;
+            }
+
+            // Get row count
+            let count_sql = format!("SELECT COUNT(*) FROM {}", table_name);
+            let row_count: usize = self
+                .conn
+                .query_row(&count_sql, [], |row| row.get::<_, i64>(0))
+                .map(|c| c as usize)
+                .unwrap_or(0);
+
+            // Get schema
+            let columns = if let Some(schema) = self.get_table_schema(table_name) {
+                schema.columns
+            } else {
+                Vec::new()
+            };
+
+            tables.push(TableWithCount {
+                name: table_name.to_string(),
+                row_count,
+                columns,
+            });
+        }
+
+        tables
+    }
+}
+
+/// Result of a SQL query execution
+#[derive(Debug, Clone)]
+pub struct QueryExecutionResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<serde_json::Value>>,
+    pub row_count: usize,
+    pub truncated: bool,
+}
+
+/// Schema information for a table column
+#[derive(Debug, Clone)]
+pub struct ColumnSchema {
+    pub name: String,
+    pub data_type: String,
+}
+
+/// Schema information for a table
+#[derive(Debug, Clone)]
+pub struct TableSchema {
+    pub name: String,
+    pub columns: Vec<ColumnSchema>,
+}
+
+/// Table information with row count
+#[derive(Debug, Clone)]
+pub struct TableWithCount {
+    pub name: String,
+    pub row_count: usize,
+    pub columns: Vec<ColumnSchema>,
 }

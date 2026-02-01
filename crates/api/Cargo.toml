@@ -7,6 +7,7 @@ edition = "2021"
 visualizer-types = { path = "../types" }
 db-reader = { path = "../db-reader" }
 indexer = { path = "../indexer" }
+schema = { path = "../schema" }
 tokio.workspace = true
 axum.workspace = true
 tower-http.workspace = true

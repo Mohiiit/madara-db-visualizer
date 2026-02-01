@@ -142,4 +142,131 @@ impl DbReader {
             .take_while(|(key, _)| key.starts_with(prefix))
             .count()
     }
+
+    /// Fetch raw value bytes for a specific key in a column family
+    pub fn get_raw_value(&self, cf_name: &str, key: &[u8]) -> Option<Vec<u8>> {
+        let cf = self.db.cf_handle(cf_name)?;
+        self.db.get_cf(&cf, key).ok().flatten()
+    }
+
+    /// Batch fetch multiple key-value pairs from a column family
+    pub fn get_key_value_pairs(&self, cf_name: &str, keys: &[Vec<u8>]) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let cf = match self.db.cf_handle(cf_name) {
+            Some(cf) => cf,
+            None => return vec![],
+        };
+
+        keys.iter()
+            .filter_map(|key| {
+                self.db
+                    .get_cf(&cf, key)
+                    .ok()
+                    .flatten()
+                    .map(|value| (key.clone(), value))
+            })
+            .collect()
+    }
+
+    /// Attempt to decode a value based on known column family schemas
+    /// Returns a human-readable hint about what the value represents
+    pub fn decode_value_hint(&self, cf_name: &str, key: &[u8], value: &[u8]) -> Option<String> {
+        match cf_name {
+            // Block-related column families
+            "block_hash" => {
+                // Key is likely block number (u64 big-endian), value is block hash
+                if key.len() == 8 {
+                    let block_num = u64::from_be_bytes(key.try_into().ok()?);
+                    Some(format!("block_number: {}", block_num))
+                } else {
+                    None
+                }
+            }
+            "block_n" | "block_number" => {
+                // Key might be block hash, value might be block number
+                if value.len() == 8 {
+                    let block_num = u64::from_be_bytes(value.try_into().ok()?);
+                    Some(format!("block_number: {}", block_num))
+                } else {
+                    None
+                }
+            }
+            "block_statuses" => {
+                // Try to interpret status byte
+                if value.len() >= 1 {
+                    let status = match value[0] {
+                        0 => "pending",
+                        1 => "accepted_on_l2",
+                        2 => "accepted_on_l1",
+                        3 => "rejected",
+                        _ => "unknown",
+                    };
+                    Some(format!("status: {}", status))
+                } else {
+                    None
+                }
+            }
+            // Transaction-related
+            "tx_hash" | "tx_hashes" => {
+                if key.len() >= 8 {
+                    // First 8 bytes might be block number
+                    let block_num = u64::from_be_bytes(key[..8].try_into().ok()?);
+                    if key.len() > 8 {
+                        let tx_idx = if key.len() >= 16 {
+                            u64::from_be_bytes(key[8..16].try_into().ok()?)
+                        } else {
+                            0
+                        };
+                        Some(format!("block: {}, tx_index: {}", block_num, tx_idx))
+                    } else {
+                        Some(format!("block: {}", block_num))
+                    }
+                } else {
+                    None
+                }
+            }
+            // Contract-related
+            "contract_class_hash" | "contract_class_hashes" => {
+                Some("contract_address -> class_hash mapping".to_string())
+            }
+            "contract_nonces" => {
+                if value.len() >= 8 {
+                    // Try to decode as u64 nonce
+                    if let Ok(bytes) = value[..8].try_into() {
+                        let nonce = u64::from_be_bytes(bytes);
+                        return Some(format!("nonce: {}", nonce));
+                    }
+                }
+                None
+            }
+            // Storage
+            "contract_storage" => {
+                Some("contract storage key-value pair".to_string())
+            }
+            // Class-related
+            "class_info" | "sierra_classes" | "compiled_classes" => {
+                Some(format!("class data, size: {} bytes", value.len()))
+            }
+            // State diff
+            "state_diff" => {
+                if key.len() == 8 {
+                    let block_num = u64::from_be_bytes(key.try_into().ok()?);
+                    Some(format!("state_diff for block: {}", block_num))
+                } else {
+                    None
+                }
+            }
+            // Trie-related
+            name if name.contains("trie") || name.contains("bonsai") => {
+                Some(format!("trie node, size: {} bytes", value.len()))
+            }
+            // Default: try to provide size info
+            _ => {
+                if value.len() > 100 {
+                    Some(format!("large value: {} bytes", value.len()))
+                } else {
+                    None
+                }
+            }
+        }
+    }
 }

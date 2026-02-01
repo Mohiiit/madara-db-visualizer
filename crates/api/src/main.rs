@@ -8,17 +8,22 @@ use clap::Parser;
 use db_reader::DbReader;
 use indexer::Indexer;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
 use visualizer_types::{
-    BlockDetail, BlockListResponse, BlockSummary, ClassListResponse, ClassResponse,
-    ColumnFamilyInfo, ColumnFamilyListResponse, ColumnFamilyStats, ContractListResponse,
-    ContractResponse, ContractStorageResponse, ContractStorageDiffInfo, DeclaredClassInfo,
-    DeployedContractInfo, EventInfo, FilteredContractsResponse, FilteredTransactionsResponse,
-    HealthResponse, IndexedTransactionInfo, IndexStatusResponse, KeyInfo, KeyListResponse,
-    MessageInfo, NonceUpdateResponse, ReplacedClassInfo, SearchResponse, StateDiffResponse,
-    StatsResponse, StorageDiffEntryInfo, StorageEntryResponse, TransactionDetail,
-    TransactionListResponse, TransactionSummary,
+    BatchKeyValueResponse, BatchKeysRequest, BlockDetail, BlockListResponse, BlockSummary,
+    ClassListResponse, ClassResponse, ColumnFamilyInfo, ColumnFamilyListResponse,
+    ColumnFamilySchemaInfo, ColumnFamilyStats, ColumnInfo, ContractListResponse, ContractResponse,
+    ContractStorageResponse, ContractStorageDiffInfo, DeclaredClassInfo, DeployedContractInfo,
+    EventInfo, FilteredContractsResponse, FilteredTransactionsResponse, HealthResponse,
+    IndexedTransactionInfo, IndexStatusResponse, KeyInfo, KeyListResponse, MessageInfo,
+    NonceUpdateResponse, QueryRequest, QueryResult, RawKeyValue, RawKeyValueResponse,
+    ReplacedClassInfo, SchemaCategoriesResponse, SchemaCategoryInfo, SchemaColumnFamiliesResponse,
+    SchemaFieldInfo, SchemaKeyInfo, SchemaRelationshipInfo, SchemaValueInfo, SearchResponse,
+    StateDiffResponse, StatsResponse, StorageDiffEntryInfo, StorageEntryResponse, TableInfo,
+    TableListResponse, TableSchemaResponse, TransactionDetail, TransactionListResponse,
+    TransactionSummary,
 };
 
 #[derive(Parser, Debug)]
@@ -693,6 +698,308 @@ async fn raw_list_keys(
     }))
 }
 
+/// Fetch raw value for a specific key (key provided as hex)
+async fn raw_get_value(
+    State(state): State<Arc<AppState>>,
+    Path((cf_name, key_hex)): Path<(String, String)>,
+) -> Result<Json<RawKeyValueResponse>, (StatusCode, String)> {
+    // Verify the column family exists
+    let cf_names = state.db.list_column_families();
+    if !cf_names.contains(&cf_name) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Column family '{}' not found", cf_name),
+        ));
+    }
+
+    // Parse hex key (with or without 0x prefix)
+    let hex_str = key_hex.strip_prefix("0x").unwrap_or(&key_hex);
+    let key_bytes = hex::decode(hex_str).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid hex key: {}", e),
+        )
+    })?;
+
+    // Fetch the value
+    let key_value = state.db.get_raw_value(&cf_name, &key_bytes).map(|value| {
+        let decoded_hint = state.db.decode_value_hint(&cf_name, &key_bytes, &value);
+        RawKeyValue {
+            key_hex: format!("0x{}", hex::encode(&key_bytes)),
+            value_hex: format!("0x{}", hex::encode(&value)),
+            value_size: value.len(),
+            decoded_hint,
+        }
+    });
+
+    let found = key_value.is_some();
+
+    Ok(Json(RawKeyValueResponse {
+        cf_name,
+        key_value,
+        found,
+    }))
+}
+
+/// Batch fetch multiple keys from a column family
+async fn raw_batch_get_values(
+    State(state): State<Arc<AppState>>,
+    Path(cf_name): Path<String>,
+    Json(request): Json<BatchKeysRequest>,
+) -> Result<Json<BatchKeyValueResponse>, (StatusCode, String)> {
+    // Verify the column family exists
+    let cf_names = state.db.list_column_families();
+    if !cf_names.contains(&cf_name) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Column family '{}' not found", cf_name),
+        ));
+    }
+
+    // Parse all hex keys
+    let mut keys_bytes: Vec<Vec<u8>> = Vec::with_capacity(request.keys.len());
+    for key_hex in &request.keys {
+        let hex_str = key_hex.strip_prefix("0x").unwrap_or(key_hex);
+        let key_bytes = hex::decode(hex_str).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid hex key '{}': {}", key_hex, e),
+            )
+        })?;
+        keys_bytes.push(key_bytes);
+    }
+
+    let requested_count = keys_bytes.len();
+
+    // Fetch key-value pairs
+    let pairs = state.db.get_key_value_pairs(&cf_name, &keys_bytes);
+
+    let key_values: Vec<RawKeyValue> = pairs
+        .into_iter()
+        .map(|(key, value)| {
+            let decoded_hint = state.db.decode_value_hint(&cf_name, &key, &value);
+            RawKeyValue {
+                key_hex: format!("0x{}", hex::encode(&key)),
+                value_hex: format!("0x{}", hex::encode(&value)),
+                value_size: value.len(),
+                decoded_hint,
+            }
+        })
+        .collect();
+
+    let found_count = key_values.len();
+
+    Ok(Json(BatchKeyValueResponse {
+        cf_name,
+        key_values,
+        requested_count,
+        found_count,
+    }))
+}
+
+// Schema documentation endpoints
+
+/// Category descriptions for the schema API
+fn get_category_description(category: &str) -> &'static str {
+    match category {
+        "blocks" => "Block headers, hashes, state diffs, and transaction/receipt mappings",
+        "transactions" => "Transaction data and execution receipts",
+        "contracts" => "Contract state including storage, nonces, and class hashes",
+        "classes" => "Cairo class definitions and compiled code (Sierra and CASM)",
+        "tries" => "Bonsai Merkle Patricia Tries for state commitment proofs",
+        "meta" => "Node metadata, configuration, and sync state",
+        "messaging" => "L1 to L2 message handling and nonce tracking",
+        "mempool" => "Pending transaction storage for the mempool",
+        "events" => "Event bloom filters for efficient event querying",
+        _ => "Unknown category",
+    }
+}
+
+/// List all schema categories
+async fn schema_categories() -> Json<SchemaCategoriesResponse> {
+    let all_schemas = schema::load_all_schemas();
+
+    // Group by category and count
+    let mut category_counts: HashMap<String, usize> = HashMap::new();
+    for cf in &all_schemas.column_families {
+        *category_counts.entry(cf.category.clone()).or_insert(0) += 1;
+    }
+
+    // Convert to response format with descriptions
+    let mut categories: Vec<SchemaCategoryInfo> = category_counts
+        .into_iter()
+        .map(|(name, count)| SchemaCategoryInfo {
+            description: get_category_description(&name).to_string(),
+            name,
+            column_family_count: count,
+        })
+        .collect();
+
+    // Sort categories alphabetically
+    categories.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let total = categories.len();
+
+    Json(SchemaCategoriesResponse { categories, total })
+}
+
+/// Convert schema crate types to API types
+fn convert_cf_schema(cf: schema::ColumnFamilySchema) -> ColumnFamilySchemaInfo {
+    ColumnFamilySchemaInfo {
+        name: cf.name,
+        category: cf.category,
+        purpose: cf.purpose,
+        key: SchemaKeyInfo {
+            rust_type: cf.key.rust_type,
+            encoding: cf.key.encoding,
+            size_bytes: cf.key.size_bytes,
+            description: cf.key.description,
+            example_raw: cf.key.example_raw,
+            example_decoded: cf.key.example_decoded,
+        },
+        value: SchemaValueInfo {
+            rust_type: cf.value.rust_type,
+            encoding: cf.value.encoding,
+            description: cf.value.description,
+            fields: cf
+                .value
+                .fields
+                .into_iter()
+                .map(|f| SchemaFieldInfo {
+                    name: f.name,
+                    rust_type: f.rust_type,
+                    description: f.description,
+                })
+                .collect(),
+        },
+        relationships: cf
+            .relationships
+            .into_iter()
+            .map(|r| SchemaRelationshipInfo {
+                target_cf: r.target_cf,
+                relationship_type: r.relationship_type,
+                description: r.description,
+            })
+            .collect(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SchemaColumnFamiliesQuery {
+    #[serde(default)]
+    category: Option<String>,
+}
+
+/// List all column family schemas with optional category filter
+async fn schema_column_families(
+    Query(query): Query<SchemaColumnFamiliesQuery>,
+) -> Json<SchemaColumnFamiliesResponse> {
+    let all_schemas = if let Some(ref category) = query.category {
+        schema::load_schemas_by_category(category)
+    } else {
+        schema::load_all_schemas()
+    };
+
+    let column_families: Vec<ColumnFamilySchemaInfo> = all_schemas
+        .column_families
+        .into_iter()
+        .map(convert_cf_schema)
+        .collect();
+
+    let total = column_families.len();
+
+    Json(SchemaColumnFamiliesResponse {
+        column_families,
+        total,
+    })
+}
+
+/// Get detailed schema for a specific column family
+async fn schema_column_family_detail(
+    Path(name): Path<String>,
+) -> Result<Json<ColumnFamilySchemaInfo>, (StatusCode, String)> {
+    let cf_schema = schema::get_schema_by_name(&name)
+        .ok_or((StatusCode::NOT_FOUND, format!("Column family schema '{}' not found", name)))?;
+
+    Ok(Json(convert_cf_schema(cf_schema)))
+}
+
+// SQL Query Execution endpoints
+
+/// List all indexed tables with row counts
+async fn index_tables(
+    State(state): State<Arc<AppState>>,
+) -> Json<TableListResponse> {
+    let indexer = state.indexer.lock().unwrap();
+    let tables = indexer.list_tables();
+
+    let table_infos: Vec<TableInfo> = tables
+        .into_iter()
+        .map(|t| TableInfo {
+            name: t.name,
+            row_count: t.row_count,
+            columns: t
+                .columns
+                .into_iter()
+                .map(|c| ColumnInfo {
+                    name: c.name,
+                    data_type: c.data_type,
+                })
+                .collect(),
+        })
+        .collect();
+
+    Json(TableListResponse { tables: table_infos })
+}
+
+/// Get table schema (columns, types)
+async fn index_table_schema(
+    State(state): State<Arc<AppState>>,
+    Path(table_name): Path<String>,
+) -> Result<Json<TableSchemaResponse>, (StatusCode, String)> {
+    let indexer = state.indexer.lock().unwrap();
+    let schema = indexer
+        .get_table_schema(&table_name)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            format!("Table '{}' not found", table_name),
+        ))?;
+
+    Ok(Json(TableSchemaResponse {
+        name: schema.name,
+        columns: schema
+            .columns
+            .into_iter()
+            .map(|c| ColumnInfo {
+                name: c.name,
+                data_type: c.data_type,
+            })
+            .collect(),
+    }))
+}
+
+/// Execute SQL query on indexed data
+async fn index_query(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<QueryRequest>,
+) -> Result<Json<QueryResult>, (StatusCode, String)> {
+    let indexer = state.indexer.lock().unwrap();
+
+    // Convert params to &str references
+    let params_refs: Vec<&str> = request.params.iter().map(|s| s.as_str()).collect();
+
+    let result = indexer
+        .execute_raw_query_with_params(&request.sql, &params_refs)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    Ok(Json(QueryResult {
+        columns: result.columns,
+        rows: result.rows,
+        row_count: result.row_count,
+        truncated: result.truncated,
+    }))
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -754,10 +1061,21 @@ async fn main() {
         .route("/api/index/sync", post(index_sync))
         .route("/api/index/transactions", get(filtered_transactions))
         .route("/api/index/contracts", get(filtered_contracts))
+        // SQL query execution endpoints
+        .route("/api/index/tables", get(index_tables))
+        .route("/api/index/tables/{name}/schema", get(index_table_schema))
+        .route("/api/index/query", post(index_query))
         // Raw column family browsing endpoints
         .route("/api/raw/cf", get(raw_list_column_families))
         .route("/api/raw/cf/{name}/stats", get(raw_cf_stats))
         .route("/api/raw/cf/{name}/keys", get(raw_list_keys))
+        // Raw key-value fetch endpoints
+        .route("/api/raw/cf/{name}/key/{key_hex}", get(raw_get_value))
+        .route("/api/raw/cf/{name}/keys/batch", post(raw_batch_get_values))
+        // Schema documentation endpoints
+        .route("/api/schema/categories", get(schema_categories))
+        .route("/api/schema/column-families", get(schema_column_families))
+        .route("/api/schema/column-families/{name}", get(schema_column_family_detail))
         .with_state(state)
         .layer(cors);
 
