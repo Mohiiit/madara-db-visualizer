@@ -4,6 +4,11 @@ A web-based **Database Inspector** for Madara's RocksDB - like pgAdmin but for b
 
 ## Screenshots
 
+### Docker Compose (Local)
+Run the full app (API + web UI) with a single command and a local Madara RocksDB path.
+
+![Docker Compose UI](docs/images/00-docker-compose-ui.png)
+
 ### Block Explorer
 ![Blocks View](docs/images/01-blocks-view.png)
 
@@ -291,6 +296,13 @@ Currently validated: `8` and `9`. Other versions may still load, but decoding/in
 Notes:
 - `.db-version` is a simple UTF-8 text file containing a single decimal `u32`.
 - With Docker Compose, we bind-mount the RocksDB *parent* directory so the container can see `<base-path>/.db-version`.
+
+## Releases / Tagging
+
+This repo tags releases by the **Madara DB schema version** (`.db-version`) to make compatibility obvious long-term.
+
+Example:
+- Tag `9` means the release targets Madara DB schema version `9` (and should clearly state which versions were validated).
 
 ### Port already in use
 ```bash
