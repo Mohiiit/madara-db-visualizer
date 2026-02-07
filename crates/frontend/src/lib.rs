@@ -466,12 +466,12 @@ fn BlockRow(block: BlockSummary, on_click: impl Fn(u64) + 'static) -> impl IntoV
     let block_number = block.block_number;
     view! {
         <tr
-            class="border-b border-gray-700 hover:bg-gray-700 cursor-pointer"
+            class="hover:bg-slate-800/40 cursor-pointer transition-colors"
             on:click=move |_| on_click(block_number)
         >
-            <td class="px-4 py-3 text-blue-400 font-mono">{"#"}{block.block_number}</td>
-            <td class="px-4 py-3 font-mono text-sm text-gray-300">{truncate_hash(&block.block_hash)}</td>
-            <td class="px-4 py-3 text-center">{block.transaction_count}</td>
+            <td class="px-4 py-3 text-sky-300 font-mono font-semibold">{"#"}{block.block_number}</td>
+            <td class="px-4 py-3 font-mono text-xs sm:text-sm text-slate-200">{truncate_hash(&block.block_hash)}</td>
+            <td class="px-4 py-3 text-center text-slate-200">{block.transaction_count}</td>
         </tr>
     }
 }
@@ -487,8 +487,13 @@ fn BlockList(on_select: impl Fn(u64) + Clone + Send + 'static) -> impl IntoView 
     });
 
     view! {
-        <div class="bg-gray-800 rounded-lg p-4">
-            <h2 class="text-xl font-semibold mb-4">"Blocks"</h2>
+        <div class="space-y-4">
+            <div class="flex items-end justify-between gap-4">
+                <div>
+                    <h2 class="text-xl font-semibold tracking-tight">"Blocks"</h2>
+                    <p class="text-sm text-slate-400">"Latest blocks from the database"</p>
+                </div>
+            </div>
             <Suspense fallback=move || view! { <p class="text-gray-400">"Loading blocks..."</p> }>
                 {move || {
                     let on_select = on_select.clone();
@@ -502,34 +507,36 @@ fn BlockList(on_select: impl Fn(u64) + Clone + Send + 'static) -> impl IntoView 
 
                                 view! {
                                     <div>
-                                        <table class="w-full text-left">
-                                            <thead class="text-gray-400 text-sm">
+                                        <div class="overflow-x-auto rounded-xl border border-slate-800">
+                                        <table class="min-w-full text-left text-sm">
+                                            <thead class="bg-slate-900/60 text-slate-300 text-xs sticky top-0 backdrop-blur">
                                                 <tr>
-                                                    <th class="px-4 py-2">"Block"</th>
-                                                    <th class="px-4 py-2">"Hash"</th>
-                                                    <th class="px-4 py-2 text-center">"Txns"</th>
+                                                    <th class="px-4 py-3 font-semibold tracking-wider">"Block"</th>
+                                                    <th class="px-4 py-3 font-semibold tracking-wider">"Hash"</th>
+                                                    <th class="px-4 py-3 font-semibold tracking-wider text-center">"Txns"</th>
                                                 </tr>
                                             </thead>
-                                            <tbody>
+                                            <tbody class="divide-y divide-slate-800">
                                                 {blocks_data.into_iter().map(|block| {
                                                     let on_select = on_select.clone();
                                                     view! { <BlockRow block=block on_click=move |n| on_select(n) /> }
                                                 }).collect::<Vec<_>>()}
                                             </tbody>
                                         </table>
-                                        <div class="flex justify-between mt-4 px-4">
+                                        </div>
+                                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
                                             <button
-                                                class="px-4 py-2 bg-gray-700 rounded disabled:opacity-50"
+                                                class="inline-flex items-center justify-center rounded-lg bg-slate-800 px-4 py-2 text-sm text-slate-100 ring-1 ring-slate-700 hover:bg-slate-700 disabled:opacity-50 transition-colors"
                                                 disabled=move || !has_prev
                                                 on:click=move |_| set_offset.update(|o| *o = o.saturating_sub(limit))
                                             >
                                                 "Previous"
                                             </button>
-                                            <span class="text-gray-400">
+                                            <span class="text-xs text-slate-400">
                                                 {move || offset.get() + 1}"-"{move || (offset.get() + limit).min(total)}" of "{total}
                                             </span>
                                             <button
-                                                class="px-4 py-2 bg-gray-700 rounded disabled:opacity-50"
+                                                class="inline-flex items-center justify-center rounded-lg bg-slate-800 px-4 py-2 text-sm text-slate-100 ring-1 ring-slate-700 hover:bg-slate-700 disabled:opacity-50 transition-colors"
                                                 disabled=move || !has_next
                                                 on:click=move |_| set_offset.update(|o| *o += limit)
                                             >
