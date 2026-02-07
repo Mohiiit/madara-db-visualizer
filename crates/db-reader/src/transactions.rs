@@ -385,7 +385,11 @@ fn make_transaction_column_key(block_n: u32, tx_index: u16) -> [u8; 6] {
 
 impl DbReader {
     /// Get transaction by block number and index
-    fn get_raw_transaction(&self, block_n: u64, tx_index: u64) -> Option<RawTransactionWithReceipt> {
+    fn get_raw_transaction(
+        &self,
+        block_n: u64,
+        tx_index: u64,
+    ) -> Option<RawTransactionWithReceipt> {
         use bincode::Options;
 
         let cf = self.db.cf_handle("block_transactions")?;
@@ -415,7 +419,8 @@ impl DbReader {
         };
 
         // Create transaction summaries from tx_hashes
-        block.tx_hashes
+        block
+            .tx_hashes
             .into_iter()
             .enumerate()
             .map(|(tx_index, tx_hash)| TransactionSummary {
@@ -483,7 +488,10 @@ impl DbReader {
     }
 
     /// Internal method to get raw block (re-exported from blocks module)
-    fn get_raw_block_internal(&self, block_n: u64) -> Option<super::blocks::RawMadaraBlockInfoInternal> {
+    fn get_raw_block_internal(
+        &self,
+        block_n: u64,
+    ) -> Option<super::blocks::RawMadaraBlockInfoInternal> {
         use bincode::Options;
 
         let cf = self.db.cf_handle("block_info")?;
@@ -602,11 +610,22 @@ impl RawTransactionWithReceipt {
             RawTransactionReceipt::Deploy(r) => &r.events,
             RawTransactionReceipt::DeployAccount(r) => &r.events,
         };
-        events.iter().map(|e| EventInfo {
-            from_address: Felt::from_bytes(&e.from_address).to_hex(),
-            keys: e.keys.iter().map(|k| Felt::from_bytes(k).to_hex()).collect(),
-            data: e.data.iter().map(|d| Felt::from_bytes(d).to_hex()).collect(),
-        }).collect()
+        events
+            .iter()
+            .map(|e| EventInfo {
+                from_address: Felt::from_bytes(&e.from_address).to_hex(),
+                keys: e
+                    .keys
+                    .iter()
+                    .map(|k| Felt::from_bytes(k).to_hex())
+                    .collect(),
+                data: e
+                    .data
+                    .iter()
+                    .map(|d| Felt::from_bytes(d).to_hex())
+                    .collect(),
+            })
+            .collect()
     }
 
     fn get_messages(&self) -> Vec<MessageInfo> {
@@ -617,41 +636,77 @@ impl RawTransactionWithReceipt {
             RawTransactionReceipt::Deploy(r) => &r.messages_sent,
             RawTransactionReceipt::DeployAccount(r) => &r.messages_sent,
         };
-        messages.iter().map(|m| MessageInfo {
-            from_address: Felt::from_bytes(&m.from_address).to_hex(),
-            to_address: Felt::from_bytes(&m.to_address).to_hex(),
-            payload: m.payload.iter().map(|p| Felt::from_bytes(p).to_hex()).collect(),
-        }).collect()
+        messages
+            .iter()
+            .map(|m| MessageInfo {
+                from_address: Felt::from_bytes(&m.from_address).to_hex(),
+                to_address: Felt::from_bytes(&m.to_address).to_hex(),
+                payload: m
+                    .payload
+                    .iter()
+                    .map(|p| Felt::from_bytes(p).to_hex())
+                    .collect(),
+            })
+            .collect()
     }
 
-    fn get_tx_fields(&self) -> (Option<String>, Vec<String>, Vec<String>, Option<String>, Option<String>) {
+    fn get_tx_fields(
+        &self,
+    ) -> (
+        Option<String>,
+        Vec<String>,
+        Vec<String>,
+        Option<String>,
+        Option<String>,
+    ) {
         match &self.transaction {
             RawTransaction::Invoke(tx) => match tx {
                 RawInvokeTransaction::V0(t) => (
                     Some(Felt::from_bytes(&t.contract_address).to_hex()),
-                    t.calldata.iter().map(|c| Felt::from_bytes(c).to_hex()).collect(),
-                    t.signature.iter().map(|s| Felt::from_bytes(s).to_hex()).collect(),
+                    t.calldata
+                        .iter()
+                        .map(|c| Felt::from_bytes(c).to_hex())
+                        .collect(),
+                    t.signature
+                        .iter()
+                        .map(|s| Felt::from_bytes(s).to_hex())
+                        .collect(),
                     None,
                     Some("0".to_string()),
                 ),
                 RawInvokeTransaction::V1(t) => (
                     Some(Felt::from_bytes(&t.sender_address).to_hex()),
-                    t.calldata.iter().map(|c| Felt::from_bytes(c).to_hex()).collect(),
-                    t.signature.iter().map(|s| Felt::from_bytes(s).to_hex()).collect(),
+                    t.calldata
+                        .iter()
+                        .map(|c| Felt::from_bytes(c).to_hex())
+                        .collect(),
+                    t.signature
+                        .iter()
+                        .map(|s| Felt::from_bytes(s).to_hex())
+                        .collect(),
                     Some(Felt::from_bytes(&t.nonce).to_hex()),
                     Some("1".to_string()),
                 ),
                 RawInvokeTransaction::V3(t) => (
                     Some(Felt::from_bytes(&t.sender_address).to_hex()),
-                    t.calldata.iter().map(|c| Felt::from_bytes(c).to_hex()).collect(),
-                    t.signature.iter().map(|s| Felt::from_bytes(s).to_hex()).collect(),
+                    t.calldata
+                        .iter()
+                        .map(|c| Felt::from_bytes(c).to_hex())
+                        .collect(),
+                    t.signature
+                        .iter()
+                        .map(|s| Felt::from_bytes(s).to_hex())
+                        .collect(),
                     Some(Felt::from_bytes(&t.nonce).to_hex()),
                     Some("3".to_string()),
                 ),
             },
             RawTransaction::L1Handler(t) => (
                 Some(Felt::from_bytes(&t.contract_address).to_hex()),
-                t.calldata.iter().map(|c| Felt::from_bytes(c).to_hex()).collect(),
+                t.calldata
+                    .iter()
+                    .map(|c| Felt::from_bytes(c).to_hex())
+                    .collect(),
                 vec![],
                 Some(format!("{}", t.nonce)),
                 Some(Felt::from_bytes(&t.version).to_hex()),
@@ -660,35 +715,50 @@ impl RawTransactionWithReceipt {
                 RawDeclareTransaction::V0(t) => (
                     Some(Felt::from_bytes(&t.sender_address).to_hex()),
                     vec![],
-                    t.signature.iter().map(|s| Felt::from_bytes(s).to_hex()).collect(),
+                    t.signature
+                        .iter()
+                        .map(|s| Felt::from_bytes(s).to_hex())
+                        .collect(),
                     None,
                     Some("0".to_string()),
                 ),
                 RawDeclareTransaction::V1(t) => (
                     Some(Felt::from_bytes(&t.sender_address).to_hex()),
                     vec![],
-                    t.signature.iter().map(|s| Felt::from_bytes(s).to_hex()).collect(),
+                    t.signature
+                        .iter()
+                        .map(|s| Felt::from_bytes(s).to_hex())
+                        .collect(),
                     Some(Felt::from_bytes(&t.nonce).to_hex()),
                     Some("1".to_string()),
                 ),
                 RawDeclareTransaction::V2(t) => (
                     Some(Felt::from_bytes(&t.sender_address).to_hex()),
                     vec![],
-                    t.signature.iter().map(|s| Felt::from_bytes(s).to_hex()).collect(),
+                    t.signature
+                        .iter()
+                        .map(|s| Felt::from_bytes(s).to_hex())
+                        .collect(),
                     Some(Felt::from_bytes(&t.nonce).to_hex()),
                     Some("2".to_string()),
                 ),
                 RawDeclareTransaction::V3(t) => (
                     Some(Felt::from_bytes(&t.sender_address).to_hex()),
                     vec![],
-                    t.signature.iter().map(|s| Felt::from_bytes(s).to_hex()).collect(),
+                    t.signature
+                        .iter()
+                        .map(|s| Felt::from_bytes(s).to_hex())
+                        .collect(),
                     Some(Felt::from_bytes(&t.nonce).to_hex()),
                     Some("3".to_string()),
                 ),
             },
             RawTransaction::Deploy(t) => (
                 None,
-                t.constructor_calldata.iter().map(|c| Felt::from_bytes(c).to_hex()).collect(),
+                t.constructor_calldata
+                    .iter()
+                    .map(|c| Felt::from_bytes(c).to_hex())
+                    .collect(),
                 vec![],
                 None,
                 Some(Felt::from_bytes(&t.version).to_hex()),
@@ -696,15 +766,27 @@ impl RawTransactionWithReceipt {
             RawTransaction::DeployAccount(tx) => match tx {
                 RawDeployAccountTransaction::V1(t) => (
                     None,
-                    t.constructor_calldata.iter().map(|c| Felt::from_bytes(c).to_hex()).collect(),
-                    t.signature.iter().map(|s| Felt::from_bytes(s).to_hex()).collect(),
+                    t.constructor_calldata
+                        .iter()
+                        .map(|c| Felt::from_bytes(c).to_hex())
+                        .collect(),
+                    t.signature
+                        .iter()
+                        .map(|s| Felt::from_bytes(s).to_hex())
+                        .collect(),
                     Some(Felt::from_bytes(&t.nonce).to_hex()),
                     Some("1".to_string()),
                 ),
                 RawDeployAccountTransaction::V3(t) => (
                     None,
-                    t.constructor_calldata.iter().map(|c| Felt::from_bytes(c).to_hex()).collect(),
-                    t.signature.iter().map(|s| Felt::from_bytes(s).to_hex()).collect(),
+                    t.constructor_calldata
+                        .iter()
+                        .map(|c| Felt::from_bytes(c).to_hex())
+                        .collect(),
+                    t.signature
+                        .iter()
+                        .map(|s| Felt::from_bytes(s).to_hex())
+                        .collect(),
                     Some(Felt::from_bytes(&t.nonce).to_hex()),
                     Some("3".to_string()),
                 ),

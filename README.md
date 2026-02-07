@@ -59,11 +59,64 @@ Write custom SQL queries against the indexed data (blocks, transactions, events,
 
 ## Quick Start
 
-### Prerequisites
+### Option A: Docker Compose (Recommended)
+
+**Prerequisites:**
+- Docker Desktop (macOS/Windows) or Docker Engine (Linux)
+- Docker Compose (`docker compose` or `docker-compose`)
+- If your DB is outside your home directory (external SSD, etc.): allow Docker Desktop "File Sharing" access to that path (otherwise the bind mount will fail)
+
+```bash
+# Fastest demo (uses the bundled sample DB)
+./scripts/up.sh
+
+# Use your Madara DB (pass either the RocksDB dir or the Madara base-path)
+./scripts/up.sh ~/.madara/db
+./scripts/up.sh ~/.madara
+
+# Pass extra docker compose args after `--` (e.g. detached)
+./scripts/up.sh ~/.madara/db -- -d
+```
+
+Open http://localhost:8080 in your browser.
+
+**Stop:**
+```bash
+./scripts/down.sh
+
+# Or directly:
+docker compose -f compose.yaml down
+# Legacy docker-compose:
+# docker-compose -f compose.yaml down
+```
+
+**Configuration (optional):**
+```bash
+cp .env.example .env
+# edit ROCKSDB_PATH / API_PORT / WEB_PORT in .env
+./scripts/up.sh
+```
+
+**Using Compose directly (optional):**
+```bash
+# ROCKSDB_PATH must point to the RocksDB directory (usually `<base-path>/db`), not the base-path.
+ROCKSDB_PATH=~/.madara/db docker compose -f compose.yaml up --build
+
+# If your RocksDB directory isn't literally named `db`, set DB_DIR_NAME (or use ./scripts/up.sh).
+# ROCKSDB_PATH=/path/to/custom-db DB_DIR_NAME=custom-db docker compose -f compose.yaml up --build
+```
+
+### Option B: Local Build (Rust + Trunk)
+
+#### Prerequisites
 
 ```bash
 # Install Rust (if not already installed)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# This project also builds to WASM; keep Rust reasonably up to date.
+# (If you hit build errors around edition 2024 deps, upgrade your toolchain.)
+rustup update
 
 # Add WASM target
 rustup target add wasm32-unknown-unknown
@@ -72,7 +125,15 @@ rustup target add wasm32-unknown-unknown
 cargo install trunk
 ```
 
-### Step 1: Clone and Build
+Optional (only if you want to modify/rebuild CSS locally):
+```bash
+# Install Node.js (for Tailwind build tooling)
+# Then generate output.css from input.css
+npm ci
+npm run css
+```
+
+#### Step 1: Clone and Build
 
 ```bash
 git clone https://github.com/Mohiiit/madara-db-visualizer.git
@@ -87,20 +148,30 @@ trunk build index.html --release
 cd ../..
 ```
 
-### Step 2: Find Your Madara Database Path
+#### Step 2: Find Your Madara Database Path
 
-The database is typically located at:
-- **Default**: `~/.madara/db`
-- **Custom**: Check your Madara node's `--base-path` flag
-
-The directory should contain `.sst` files (RocksDB data files).
-
-```bash
-# Verify the path contains SST files
-ls ~/.madara/db/*.sst
+Madara's default layout looks like:
+```
+<base-path>/
+  .db-version         # DB schema version (optional, but used for compatibility checks)
+  db/                 # RocksDB directory (pass this path to the visualizer)
+    CURRENT
+    *.sst
 ```
 
-### Step 3: Start the Servers
+- **Default base-path** is usually `~/.madara`, so the RocksDB directory is `~/.madara/db`.
+- If you run Madara with `--base-path /some/dir`, the RocksDB directory is `/some/dir/db`.
+
+`./scripts/up.sh` accepts either `<base-path>` or `<base-path>/db`. The API `--db-path` expects the RocksDB directory.
+
+The RocksDB directory should contain a `CURRENT` file (and typically `*.sst` files).
+
+```bash
+ls ~/.madara/db/CURRENT
+ls ~/.madara/db/*.sst  # optional sanity check
+```
+
+#### Step 3: Start the Servers
 
 **Terminal 1 - API Server:**
 ```bash
@@ -118,7 +189,7 @@ cd crates/frontend/dist
 python3 -m http.server 8080
 ```
 
-### Step 4: Open the Visualizer
+#### Step 4: Open the Visualizer
 
 Open http://localhost:8080 in your browser.
 
@@ -130,8 +201,9 @@ Open http://localhost:8080 in your browser.
 ./target/release/api --help
 
 Options:
-  --db-path <PATH>  Path to Madara RocksDB database (required)
-  --port <PORT>     API server port [default: 3000]
+  --db-path <PATH>      Path to the Madara RocksDB database directory (usually `<base-path>/db`)
+  --index-path <PATH>   Path to the SQLite index database
+  --port <PORT>         API server port [default: 3000]
 ```
 
 ### Environment Variables
@@ -206,10 +278,19 @@ madara-db-visualizer/
 ## Troubleshooting
 
 ### "Database path does not exist"
-Ensure `--db-path` points to the RocksDB directory containing `.sst` files:
+Ensure `--db-path` points to the RocksDB directory (usually `<base-path>/db`) containing a `CURRENT` file / `.sst` files:
 ```bash
 ls /path/to/db/*.sst  # Should list SST files
 ```
+
+### Madara DB version compatibility (`.db-version`)
+The API reports the detected Madara DB schema version in `GET /api/stats` (from `<base-path>/.db-version`, next to the `db/` directory).
+
+Currently validated: `8` and `9`. Other versions may still load, but decoding/indexing may be incomplete.
+
+Notes:
+- `.db-version` is a simple UTF-8 text file containing a single decimal `u32`.
+- With Docker Compose, we bind-mount the RocksDB *parent* directory so the container can see `<base-path>/.db-version`.
 
 ### Port already in use
 ```bash
@@ -231,6 +312,10 @@ CARGO_TARGET_DIR=target cargo build -p api --release
 Delete the SQLite index to rebuild:
 ```bash
 rm /tmp/madara_visualizer_index.db
+```
+If you started via Docker Compose, the index is stored in a Docker volume:
+```bash
+docker compose -f compose.yaml down -v
 ```
 
 ## Development

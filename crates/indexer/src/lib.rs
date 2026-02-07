@@ -147,8 +147,8 @@ impl Indexer {
 
         match version {
             Ok(v) if v == SCHEMA_VERSION => Ok(false), // No migration needed
-            Ok(_) => Ok(true),                          // Migration needed
-            Err(_) => Ok(true),                         // Table doesn't exist or no column
+            Ok(_) => Ok(true),                         // Migration needed
+            Err(_) => Ok(true),                        // Table doesn't exist or no column
         }
     }
 
@@ -311,11 +311,9 @@ impl Indexer {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
 
-        let total_transactions: u64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM transactions",
-            [],
-            |row| row.get(0),
-        )?;
+        let total_transactions: u64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))?;
 
         let failed_transactions: u64 = self.conn.query_row(
             "SELECT COUNT(*) FROM transactions WHERE status = 'REVERTED'",
@@ -323,23 +321,19 @@ impl Indexer {
             |row| row.get(0),
         )?;
 
-        let total_events: u64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM events",
-            [],
-            |row| row.get(0),
-        )?;
+        let total_events: u64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?;
 
-        let total_storage_updates: u64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM storage_updates",
-            [],
-            |row| row.get(0),
-        )?;
+        let total_storage_updates: u64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM storage_updates", [], |row| row.get(0))?;
 
-        let total_deployed_contracts: u64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM deployed_contracts",
-            [],
-            |row| row.get(0),
-        )?;
+        let total_deployed_contracts: u64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM deployed_contracts", [], |row| {
+                    row.get(0)
+                })?;
 
         Ok(IndexStatus {
             indexed_blocks,
@@ -398,31 +392,52 @@ impl Indexer {
                     // Try to get full transaction details
                     let tx_detail = db.get_transaction_detail(block_n, tx_idx as u64);
 
-                    let (tx_type, status, revert_reason, sender, version, actual_fee, fee_unit, nonce, calldata_len, sig_len) =
-                        if let Some(ref detail) = tx_detail {
-                            let status_str = match &detail.status {
-                                db_reader::ExecutionStatus::Succeeded => "SUCCEEDED",
-                                db_reader::ExecutionStatus::Reverted(_) => "REVERTED",
-                            };
-                            let revert = match &detail.status {
-                                db_reader::ExecutionStatus::Reverted(reason) => Some(reason.clone()),
-                                _ => None,
-                            };
-                            (
-                                detail.tx_type.to_string(),
-                                status_str.to_string(),
-                                revert,
-                                detail.sender_address.clone(),
-                                detail.version.clone(),
-                                Some(detail.actual_fee.clone()),
-                                Some(detail.fee_unit.clone()),
-                                detail.nonce.clone(),
-                                Some(detail.calldata.len() as i64),
-                                Some(detail.signature.len() as i64),
-                            )
-                        } else {
-                            ("UNKNOWN".to_string(), "UNKNOWN".to_string(), None, None, None, None, None, None, None, None)
+                    let (
+                        tx_type,
+                        status,
+                        revert_reason,
+                        sender,
+                        version,
+                        actual_fee,
+                        fee_unit,
+                        nonce,
+                        calldata_len,
+                        sig_len,
+                    ) = if let Some(ref detail) = tx_detail {
+                        let status_str = match &detail.status {
+                            db_reader::ExecutionStatus::Succeeded => "SUCCEEDED",
+                            db_reader::ExecutionStatus::Reverted(_) => "REVERTED",
                         };
+                        let revert = match &detail.status {
+                            db_reader::ExecutionStatus::Reverted(reason) => Some(reason.clone()),
+                            _ => None,
+                        };
+                        (
+                            detail.tx_type.to_string(),
+                            status_str.to_string(),
+                            revert,
+                            detail.sender_address.clone(),
+                            detail.version.clone(),
+                            Some(detail.actual_fee.clone()),
+                            Some(detail.fee_unit.clone()),
+                            detail.nonce.clone(),
+                            Some(detail.calldata.len() as i64),
+                            Some(detail.signature.len() as i64),
+                        )
+                    } else {
+                        (
+                            "UNKNOWN".to_string(),
+                            "UNKNOWN".to_string(),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    };
 
                     tx.execute(
                         "INSERT OR REPLACE INTO transactions (tx_hash, block_number, tx_index, tx_type, version, status, revert_reason, sender_address, nonce, actual_fee, fee_unit, calldata_length, signature_length) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
@@ -594,7 +609,8 @@ impl Indexer {
         sql.push_str(" ORDER BY block_number DESC, tx_index DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
@@ -640,7 +656,8 @@ impl Indexer {
         sql.push_str(" LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
@@ -681,7 +698,8 @@ impl Indexer {
         sql.push_str(" ORDER BY block_number DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
@@ -729,7 +747,8 @@ impl Indexer {
         sql.push_str(" ORDER BY block_number DESC, event_index DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
@@ -780,7 +799,8 @@ impl Indexer {
 
         sql.push_str(" ORDER BY block_number DESC, id DESC LIMIT 1000");
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
@@ -823,7 +843,8 @@ impl Indexer {
         sql.push_str(" ORDER BY block_number DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
@@ -859,7 +880,8 @@ impl Indexer {
         sql.push_str(" ORDER BY declared_at_block DESC NULLS LAST LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
@@ -957,7 +979,8 @@ impl Indexer {
 
         sql.push_str(" ORDER BY block_number ASC");
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
@@ -1006,7 +1029,10 @@ impl Indexer {
     }
 
     /// Get transaction by hash
-    pub fn get_transaction(&self, tx_hash: &str) -> Result<Option<IndexedTransaction>, IndexerError> {
+    pub fn get_transaction(
+        &self,
+        tx_hash: &str,
+    ) -> Result<Option<IndexedTransaction>, IndexerError> {
         let result = self.conn.query_row(
             "SELECT tx_hash, block_number, tx_index, tx_type, version, status, revert_reason, sender_address, nonce, actual_fee, fee_unit, max_fee, calldata_length, signature_length FROM transactions WHERE tx_hash = ?",
             params![tx_hash],
@@ -1039,7 +1065,9 @@ impl Indexer {
 
     /// Count transactions by type
     pub fn count_transactions_by_type(&self) -> Result<Vec<(String, i64)>, IndexerError> {
-        let mut stmt = self.conn.prepare("SELECT tx_type, COUNT(*) FROM transactions GROUP BY tx_type ORDER BY COUNT(*) DESC")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT tx_type, COUNT(*) FROM transactions GROUP BY tx_type ORDER BY COUNT(*) DESC",
+        )?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
@@ -1053,7 +1081,9 @@ impl Indexer {
 
     /// Count transactions by status
     pub fn count_transactions_by_status(&self) -> Result<Vec<(String, i64)>, IndexerError> {
-        let mut stmt = self.conn.prepare("SELECT status, COUNT(*) FROM transactions GROUP BY status ORDER BY COUNT(*) DESC")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT status, COUNT(*) FROM transactions GROUP BY status ORDER BY COUNT(*) DESC",
+        )?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
@@ -1080,7 +1110,10 @@ impl Indexer {
     }
 
     /// Get top contracts by storage updates
-    pub fn get_top_contracts_by_storage(&self, limit: usize) -> Result<Vec<(String, i64)>, IndexerError> {
+    pub fn get_top_contracts_by_storage(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(String, i64)>, IndexerError> {
         let mut stmt = self.conn.prepare("SELECT contract_address, COUNT(*) as count FROM storage_updates GROUP BY contract_address ORDER BY count DESC LIMIT ?")?;
         let rows = stmt.query_map([limit as i64], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
@@ -1124,10 +1157,26 @@ impl Indexer {
 
         // Check for forbidden keywords that could modify data
         let forbidden = [
-            "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER",
-            "TRUNCATE", "REPLACE", "ATTACH", "DETACH", "PRAGMA",
-            "VACUUM", "REINDEX", "GRANT", "REVOKE", "BEGIN", "COMMIT",
-            "ROLLBACK", "SAVEPOINT", "RELEASE",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "DROP",
+            "CREATE",
+            "ALTER",
+            "TRUNCATE",
+            "REPLACE",
+            "ATTACH",
+            "DETACH",
+            "PRAGMA",
+            "VACUUM",
+            "REINDEX",
+            "GRANT",
+            "REVOKE",
+            "BEGIN",
+            "COMMIT",
+            "ROLLBACK",
+            "SAVEPOINT",
+            "RELEASE",
         ];
 
         for keyword in forbidden {
@@ -1162,11 +1211,16 @@ impl Indexer {
 
         // Set query timeout
         self.conn
-            .busy_timeout(std::time::Duration::from_secs(Self::QUERY_TIMEOUT_SECS as u64))
+            .busy_timeout(std::time::Duration::from_secs(
+                Self::QUERY_TIMEOUT_SECS as u64,
+            ))
             .map_err(|e| format!("Failed to set timeout: {}", e))?;
 
         // Prepare the statement
-        let mut stmt = self.conn.prepare(sql).map_err(|e| format!("SQL error: {}", e))?;
+        let mut stmt = self
+            .conn
+            .prepare(sql)
+            .map_err(|e| format!("SQL error: {}", e))?;
 
         // Get column information
         let column_count = stmt.column_count();
@@ -1175,10 +1229,8 @@ impl Indexer {
             .collect();
 
         // Build params for rusqlite
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params
-            .iter()
-            .map(|s| s as &dyn rusqlite::ToSql)
-            .collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
 
         // Execute the query
         let mut rows_result = stmt
@@ -1188,7 +1240,10 @@ impl Indexer {
         let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
         let mut truncated = false;
 
-        while let Some(row) = rows_result.next().map_err(|e| format!("Row fetch error: {}", e))? {
+        while let Some(row) = rows_result
+            .next()
+            .map_err(|e| format!("Row fetch error: {}", e))?
+        {
             if result_rows.len() >= Self::MAX_RESULT_ROWS {
                 truncated = true;
                 break;
@@ -1198,12 +1253,12 @@ impl Indexer {
             for i in 0..column_count {
                 let value = match row.get_ref(i) {
                     Ok(rusqlite::types::ValueRef::Null) => serde_json::Value::Null,
-                    Ok(rusqlite::types::ValueRef::Integer(n)) => serde_json::Value::Number(n.into()),
-                    Ok(rusqlite::types::ValueRef::Real(f)) => {
-                        serde_json::Number::from_f64(f)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null)
+                    Ok(rusqlite::types::ValueRef::Integer(n)) => {
+                        serde_json::Value::Number(n.into())
                     }
+                    Ok(rusqlite::types::ValueRef::Real(f)) => serde_json::Number::from_f64(f)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null),
                     Ok(rusqlite::types::ValueRef::Text(t)) => {
                         serde_json::Value::String(String::from_utf8_lossy(t).to_string())
                     }

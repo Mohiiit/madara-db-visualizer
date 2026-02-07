@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.82-slim-bookworm AS builder
+FROM rust:1.89-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -15,7 +15,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
 # Build the API binary
-RUN cargo build -p api --release
+RUN cargo build -p api --release --locked
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -23,6 +23,7 @@ FROM debian:bookworm-slim
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -43,7 +44,7 @@ ENV PORT=3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3000/api/health || exit 1
+    CMD sh -c 'curl -fsS "http://localhost:${PORT}/api/health" > /dev/null'
 
 # Run the API server
-CMD ["/app/api", "--db-path", "/app/sample-db", "--port", "3000"]
+CMD ["sh", "-c", "/app/api --db-path \"${DB_PATH}\" --index-path \"${INDEX_PATH}\" --port \"${PORT}\""]

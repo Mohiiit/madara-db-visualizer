@@ -117,7 +117,9 @@ impl DbReader {
         };
 
         // First try to use RocksDB's estimate (fast but approximate)
-        if let Ok(Some(estimate)) = self.db.property_int_value_cf(&cf, "rocksdb.estimate-num-keys")
+        if let Ok(Some(estimate)) = self
+            .db
+            .property_int_value_cf(&cf, "rocksdb.estimate-num-keys")
         {
             // If estimate is available and reasonable, use it
             // For accuracy, we could iterate, but that's expensive
@@ -239,9 +241,7 @@ impl DbReader {
                 None
             }
             // Storage
-            "contract_storage" => {
-                Some("contract storage key-value pair".to_string())
-            }
+            "contract_storage" => Some("contract storage key-value pair".to_string()),
             // Class-related
             "class_info" | "sierra_classes" | "compiled_classes" => {
                 Some(format!("class data, size: {} bytes", value.len()))

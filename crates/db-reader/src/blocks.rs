@@ -150,7 +150,11 @@ impl From<RawMadaraBlockInfo> for BlockDetail {
             transaction_count: info.header.transaction_count,
             event_count: info.header.event_count,
             l2_gas_used: info.total_l2_gas_used,
-            tx_hashes: info.tx_hashes.into_iter().map(|f| Felt::from_bytes(&f).to_hex()).collect(),
+            tx_hashes: info
+                .tx_hashes
+                .into_iter()
+                .map(|f| Felt::from_bytes(&f).to_hex())
+                .collect(),
         }
     }
 }

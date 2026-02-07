@@ -132,8 +132,15 @@ impl DbReader {
         let raw: RawStateDiff = match opts.deserialize(&value) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("State diff deserialization error for block {}: {}", block_n, e);
-                eprintln!("Raw value length: {}, first 20 bytes: {:?}", value.len(), &value[..20.min(value.len())]);
+                eprintln!(
+                    "State diff deserialization error for block {}: {}",
+                    block_n, e
+                );
+                eprintln!(
+                    "Raw value length: {}, first 20 bytes: {:?}",
+                    value.len(),
+                    &value[..20.min(value.len())]
+                );
                 return None;
             }
         };

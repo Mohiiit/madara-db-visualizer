@@ -15,10 +15,10 @@ use visualizer_types::{
     BatchKeyValueResponse, BatchKeysRequest, BlockDetail, BlockListResponse, BlockSummary,
     ClassListResponse, ClassResponse, ColumnFamilyInfo, ColumnFamilyListResponse,
     ColumnFamilySchemaInfo, ColumnFamilyStats, ColumnInfo, ContractListResponse, ContractResponse,
-    ContractStorageResponse, ContractStorageDiffInfo, DeclaredClassInfo, DeployedContractInfo,
+    ContractStorageDiffInfo, ContractStorageResponse, DeclaredClassInfo, DeployedContractInfo,
     EventInfo, FilteredContractsResponse, FilteredTransactionsResponse, HealthResponse,
-    IndexedTransactionInfo, IndexStatusResponse, KeyInfo, KeyListResponse, MessageInfo,
-    NonceUpdateResponse, QueryRequest, QueryResult, RawKeyValue, RawKeyValueResponse,
+    IndexStatusResponse, IndexedTransactionInfo, KeyInfo, KeyListResponse, MadaraDbVersionInfo,
+    MessageInfo, NonceUpdateResponse, QueryRequest, QueryResult, RawKeyValue, RawKeyValueResponse,
     ReplacedClassInfo, SchemaCategoriesResponse, SchemaCategoryInfo, SchemaColumnFamiliesResponse,
     SchemaFieldInfo, SchemaKeyInfo, SchemaRelationshipInfo, SchemaValueInfo, SearchResponse,
     StateDiffResponse, StatsResponse, StorageDiffEntryInfo, StorageEntryResponse, TableInfo,
@@ -48,6 +48,9 @@ struct AppState {
     indexer: Mutex<Indexer>,
 }
 
+// Keep in sync with upstream Madara `.db-versions.yml` as we validate more versions.
+const SUPPORTED_MADARA_DB_VERSIONS: &[u32] = &[8, 9];
+
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".to_string(),
@@ -56,12 +59,23 @@ async fn health() -> Json<HealthResponse> {
 
 async fn stats(State(state): State<Arc<AppState>>) -> Json<StatsResponse> {
     let db_stats = state.db.get_stats();
+    let detected = state.db.detect_madara_db_version();
+    let supported = detected
+        .version
+        .map(|v| SUPPORTED_MADARA_DB_VERSIONS.contains(&v));
 
     Json(StatsResponse {
         db_path: db_stats.db_path,
         latest_block: db_stats.latest_block,
         column_count: db_stats.column_count,
         columns: db_stats.columns,
+        madara_db_version: MadaraDbVersionInfo {
+            version: detected.version,
+            supported,
+            supported_versions: SUPPORTED_MADARA_DB_VERSIONS.to_vec(),
+            source: detected.source_path.map(|p| p.display().to_string()),
+            error: detected.error,
+        },
     })
 }
 
@@ -94,7 +108,11 @@ async fn blocks(
         })
         .collect();
 
-    let total = state.db.get_latest_block_number().map(|n| n + 1).unwrap_or(0);
+    let total = state
+        .db
+        .get_latest_block_number()
+        .map(|n| n + 1)
+        .unwrap_or(0);
 
     Json(BlockListResponse {
         blocks,
@@ -108,10 +126,10 @@ async fn block_detail(
     State(state): State<Arc<AppState>>,
     Path(block_number): Path<u64>,
 ) -> Result<Json<BlockDetail>, (StatusCode, String)> {
-    let block = state
-        .db
-        .get_block_detail(block_number)
-        .ok_or((StatusCode::NOT_FOUND, format!("Block {} not found", block_number)))?;
+    let block = state.db.get_block_detail(block_number).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Block {} not found", block_number),
+    ))?;
 
     Ok(Json(BlockDetail {
         block_number: block.block_number,
@@ -139,7 +157,9 @@ async fn block_transactions(
         .map(|tx| {
             let (status, revert_reason) = match tx.status {
                 db_reader::ExecutionStatus::Succeeded => ("SUCCEEDED".to_string(), None),
-                db_reader::ExecutionStatus::Reverted(reason) => ("REVERTED".to_string(), Some(reason)),
+                db_reader::ExecutionStatus::Reverted(reason) => {
+                    ("REVERTED".to_string(), Some(reason))
+                }
             };
             TransactionSummary {
                 tx_hash: tx.tx_hash,
@@ -167,7 +187,13 @@ async fn transaction_detail_by_index(
     let tx = state
         .db
         .get_transaction_detail(block_number, tx_index)
-        .ok_or((StatusCode::NOT_FOUND, format!("Transaction at block {} index {} not found", block_number, tx_index)))?;
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            format!(
+                "Transaction at block {} index {} not found",
+                block_number, tx_index
+            ),
+        ))?;
 
     let (status, revert_reason) = match tx.status {
         db_reader::ExecutionStatus::Succeeded => ("SUCCEEDED".to_string(), None),
@@ -183,16 +209,24 @@ async fn transaction_detail_by_index(
         tx_index: tx.tx_index,
         actual_fee: tx.actual_fee,
         fee_unit: tx.fee_unit,
-        events: tx.events.into_iter().map(|e| EventInfo {
-            from_address: e.from_address,
-            keys: e.keys,
-            data: e.data,
-        }).collect(),
-        messages_sent: tx.messages_sent.into_iter().map(|m| MessageInfo {
-            from_address: m.from_address,
-            to_address: m.to_address,
-            payload: m.payload,
-        }).collect(),
+        events: tx
+            .events
+            .into_iter()
+            .map(|e| EventInfo {
+                from_address: e.from_address,
+                keys: e.keys,
+                data: e.data,
+            })
+            .collect(),
+        messages_sent: tx
+            .messages_sent
+            .into_iter()
+            .map(|m| MessageInfo {
+                from_address: m.from_address,
+                to_address: m.to_address,
+                payload: m.payload,
+            })
+            .collect(),
         sender_address: tx.sender_address,
         calldata: tx.calldata,
         signature: tx.signature,
@@ -206,15 +240,15 @@ async fn transaction_detail(
     Path(tx_hash): Path<String>,
 ) -> Result<Json<TransactionDetail>, (StatusCode, String)> {
     // Find the transaction by hash
-    let (block_n, tx_index) = state
-        .db
-        .find_transaction_by_hash(&tx_hash)
-        .ok_or((StatusCode::NOT_FOUND, format!("Transaction {} not found (hash lookup failed)", tx_hash)))?;
+    let (block_n, tx_index) = state.db.find_transaction_by_hash(&tx_hash).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Transaction {} not found (hash lookup failed)", tx_hash),
+    ))?;
 
-    let tx = state
-        .db
-        .get_transaction_detail(block_n, tx_index)
-        .ok_or((StatusCode::NOT_FOUND, format!("Transaction {} not found (detail lookup failed)", tx_hash)))?;
+    let tx = state.db.get_transaction_detail(block_n, tx_index).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Transaction {} not found (detail lookup failed)", tx_hash),
+    ))?;
 
     let (status, revert_reason) = match tx.status {
         db_reader::ExecutionStatus::Succeeded => ("SUCCEEDED".to_string(), None),
@@ -230,16 +264,24 @@ async fn transaction_detail(
         tx_index: tx.tx_index,
         actual_fee: tx.actual_fee,
         fee_unit: tx.fee_unit,
-        events: tx.events.into_iter().map(|e| EventInfo {
-            from_address: e.from_address,
-            keys: e.keys,
-            data: e.data,
-        }).collect(),
-        messages_sent: tx.messages_sent.into_iter().map(|m| MessageInfo {
-            from_address: m.from_address,
-            to_address: m.to_address,
-            payload: m.payload,
-        }).collect(),
+        events: tx
+            .events
+            .into_iter()
+            .map(|e| EventInfo {
+                from_address: e.from_address,
+                keys: e.keys,
+                data: e.data,
+            })
+            .collect(),
+        messages_sent: tx
+            .messages_sent
+            .into_iter()
+            .map(|m| MessageInfo {
+                from_address: m.from_address,
+                to_address: m.to_address,
+                payload: m.payload,
+            })
+            .collect(),
         sender_address: tx.sender_address,
         calldata: tx.calldata,
         signature: tx.signature,
@@ -284,10 +326,10 @@ async fn contract_detail(
     State(state): State<Arc<AppState>>,
     Path(address): Path<String>,
 ) -> Result<Json<ContractResponse>, (StatusCode, String)> {
-    let contract = state
-        .db
-        .get_contract(&address)
-        .ok_or((StatusCode::NOT_FOUND, format!("Contract {} not found", address)))?;
+    let contract = state.db.get_contract(&address).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Contract {} not found", address),
+    ))?;
 
     Ok(Json(ContractResponse {
         address: contract.address,
@@ -344,10 +386,10 @@ async fn class_detail(
     State(state): State<Arc<AppState>>,
     Path(class_hash): Path<String>,
 ) -> Result<Json<ClassResponse>, (StatusCode, String)> {
-    let class = state
-        .db
-        .get_class(&class_hash)
-        .ok_or((StatusCode::NOT_FOUND, format!("Class {} not found", class_hash)))?;
+    let class = state.db.get_class(&class_hash).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Class {} not found", class_hash),
+    ))?;
 
     Ok(Json(ClassResponse {
         class_hash: class.class_hash,
@@ -362,10 +404,10 @@ async fn block_state_diff(
     State(state): State<Arc<AppState>>,
     Path(block_number): Path<u64>,
 ) -> Result<Json<StateDiffResponse>, (StatusCode, String)> {
-    let diff = state
-        .db
-        .get_state_diff(block_number)
-        .ok_or((StatusCode::NOT_FOUND, format!("State diff for block {} not found", block_number)))?;
+    let diff = state.db.get_state_diff(block_number).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("State diff for block {} not found", block_number),
+    ))?;
 
     Ok(Json(StateDiffResponse {
         block_number,
@@ -493,7 +535,9 @@ async fn index_status(State(state): State<Arc<AppState>>) -> Json<IndexStatusRes
     }
 }
 
-async fn index_sync(State(state): State<Arc<AppState>>) -> Result<Json<IndexStatusResponse>, (StatusCode, String)> {
+async fn index_sync(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<IndexStatusResponse>, (StatusCode, String)> {
     let mut indexer = state.indexer.lock().unwrap();
     match indexer.sync_from_db(&state.db) {
         Ok(count) => {
@@ -619,10 +663,10 @@ async fn raw_cf_stats(
     State(state): State<Arc<AppState>>,
     Path(cf_name): Path<String>,
 ) -> Result<Json<ColumnFamilyStats>, (StatusCode, String)> {
-    let stats = state
-        .db
-        .get_cf_stats(&cf_name)
-        .ok_or((StatusCode::NOT_FOUND, format!("Column family '{}' not found", cf_name)))?;
+    let stats = state.db.get_cf_stats(&cf_name).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Column family '{}' not found", cf_name),
+    ))?;
 
     Ok(Json(ColumnFamilyStats {
         name: stats.name,
@@ -655,7 +699,10 @@ async fn raw_list_keys(
     // Verify the column family exists
     let cf_names = state.db.list_column_families();
     if !cf_names.contains(&cf_name) {
-        return Err((StatusCode::NOT_FOUND, format!("Column family '{}' not found", cf_name)));
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Column family '{}' not found", cf_name),
+        ));
     }
 
     // Parse prefix if provided (expects hex string with optional 0x prefix)
@@ -672,12 +719,9 @@ async fn raw_list_keys(
     };
 
     // Get keys with pagination
-    let keys_raw = state.db.list_keys(
-        &cf_name,
-        query.limit,
-        query.offset,
-        prefix_bytes.as_deref(),
-    );
+    let keys_raw = state
+        .db
+        .list_keys(&cf_name, query.limit, query.offset, prefix_bytes.as_deref());
 
     let keys: Vec<KeyInfo> = keys_raw
         .into_iter()
@@ -714,12 +758,8 @@ async fn raw_get_value(
 
     // Parse hex key (with or without 0x prefix)
     let hex_str = key_hex.strip_prefix("0x").unwrap_or(&key_hex);
-    let key_bytes = hex::decode(hex_str).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("Invalid hex key: {}", e),
-        )
-    })?;
+    let key_bytes = hex::decode(hex_str)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid hex key: {}", e)))?;
 
     // Fetch the value
     let key_value = state.db.get_raw_value(&cf_name, &key_bytes).map(|value| {
@@ -918,8 +958,10 @@ async fn schema_column_families(
 async fn schema_column_family_detail(
     Path(name): Path<String>,
 ) -> Result<Json<ColumnFamilySchemaInfo>, (StatusCode, String)> {
-    let cf_schema = schema::get_schema_by_name(&name)
-        .ok_or((StatusCode::NOT_FOUND, format!("Column family schema '{}' not found", name)))?;
+    let cf_schema = schema::get_schema_by_name(&name).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Column family schema '{}' not found", name),
+    ))?;
 
     Ok(Json(convert_cf_schema(cf_schema)))
 }
@@ -927,9 +969,7 @@ async fn schema_column_family_detail(
 // SQL Query Execution endpoints
 
 /// List all indexed tables with row counts
-async fn index_tables(
-    State(state): State<Arc<AppState>>,
-) -> Json<TableListResponse> {
+async fn index_tables(State(state): State<Arc<AppState>>) -> Json<TableListResponse> {
     let indexer = state.indexer.lock().unwrap();
     let tables = indexer.list_tables();
 
@@ -949,7 +989,9 @@ async fn index_tables(
         })
         .collect();
 
-    Json(TableListResponse { tables: table_infos })
+    Json(TableListResponse {
+        tables: table_infos,
+    })
 }
 
 /// Get table schema (columns, types)
@@ -958,12 +1000,10 @@ async fn index_table_schema(
     Path(table_name): Path<String>,
 ) -> Result<Json<TableSchemaResponse>, (StatusCode, String)> {
     let indexer = state.indexer.lock().unwrap();
-    let schema = indexer
-        .get_table_schema(&table_name)
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            format!("Table '{}' not found", table_name),
-        ))?;
+    let schema = indexer.get_table_schema(&table_name).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Table '{}' not found", table_name),
+    ))?;
 
     Ok(Json(TableSchemaResponse {
         name: schema.name,
@@ -1046,15 +1086,24 @@ async fn main() {
         .route("/api/stats", get(stats))
         .route("/api/blocks", get(blocks))
         .route("/api/blocks/{block_number}", get(block_detail))
-        .route("/api/blocks/{block_number}/transactions", get(block_transactions))
-        .route("/api/blocks/{block_number}/transactions/{tx_index}", get(transaction_detail_by_index))
+        .route(
+            "/api/blocks/{block_number}/transactions",
+            get(block_transactions),
+        )
+        .route(
+            "/api/blocks/{block_number}/transactions/{tx_index}",
+            get(transaction_detail_by_index),
+        )
         .route("/api/transactions/{tx_hash}", get(transaction_detail))
         .route("/api/contracts", get(contracts))
         .route("/api/contracts/{address}", get(contract_detail))
         .route("/api/contracts/{address}/storage", get(contract_storage))
         .route("/api/classes", get(classes))
         .route("/api/classes/{class_hash}", get(class_detail))
-        .route("/api/blocks/{block_number}/state-diff", get(block_state_diff))
+        .route(
+            "/api/blocks/{block_number}/state-diff",
+            get(block_state_diff),
+        )
         .route("/api/search", get(search))
         // Index endpoints
         .route("/api/index/status", get(index_status))
@@ -1075,7 +1124,10 @@ async fn main() {
         // Schema documentation endpoints
         .route("/api/schema/categories", get(schema_categories))
         .route("/api/schema/column-families", get(schema_column_families))
-        .route("/api/schema/column-families/{name}", get(schema_column_family_detail))
+        .route(
+            "/api/schema/column-families/{name}",
+            get(schema_column_family_detail),
+        )
         .with_state(state)
         .layer(cors);
 

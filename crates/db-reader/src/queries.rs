@@ -74,8 +74,7 @@ impl DbReader {
                 return Some(u32::from_le_bytes([value[2], value[3], value[4], value[5]]) as u64);
             } else if first == 253 && value.len() >= 10 {
                 return Some(u64::from_le_bytes([
-                    value[2], value[3], value[4], value[5],
-                    value[6], value[7], value[8], value[9],
+                    value[2], value[3], value[4], value[5], value[6], value[7], value[8], value[9],
                 ]));
             }
         }
@@ -112,10 +111,9 @@ impl DbReader {
 
     /// Get the number of entries in a column family
     pub fn get_column_count(&self, column_name: &str) -> Result<u64, DbError> {
-        let cf = self
-            .db
-            .cf_handle(column_name)
-            .ok_or_else(|| DbError::Deserialize(format!("Column family not found: {column_name}")))?;
+        let cf = self.db.cf_handle(column_name).ok_or_else(|| {
+            DbError::Deserialize(format!("Column family not found: {column_name}"))
+        })?;
 
         // Use RocksDB property to get approximate number of keys
         let prop = self

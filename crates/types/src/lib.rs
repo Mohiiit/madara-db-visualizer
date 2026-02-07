@@ -11,6 +11,22 @@ pub struct StatsResponse {
     pub latest_block: Option<u64>,
     pub column_count: usize,
     pub columns: Vec<String>,
+    pub madara_db_version: MadaraDbVersionInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MadaraDbVersionInfo {
+    /// The detected Madara DB schema version (from `.db-version`), if present.
+    pub version: Option<u32>,
+    /// Whether the visualizer considers this DB version supported.
+    /// `None` means "unknown" (version could not be detected).
+    pub supported: Option<bool>,
+    /// Versions supported by this visualizer build.
+    pub supported_versions: Vec<u32>,
+    /// Best-effort hint of where the version was detected from (e.g. path to `.db-version`).
+    pub source: Option<String>,
+    /// Best-effort error message if detection failed (e.g. invalid file content).
+    pub error: Option<String>,
 }
 
 /// Summary of a block for list views

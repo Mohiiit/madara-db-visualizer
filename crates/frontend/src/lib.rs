@@ -2,12 +2,12 @@ use leptos::prelude::*;
 use std::sync::OnceLock;
 use visualizer_types::{
     BlockDetail, BlockListResponse, BlockSummary, ClassListResponse, ClassResponse,
-    ColumnFamilyInfo, ColumnFamilyListResponse, ColumnFamilySchemaInfo,
-    ContractListResponse, ContractResponse, ContractStorageResponse, FilteredTransactionsResponse,
-    IndexStatusResponse, IndexedTransactionInfo, KeyListResponse, QueryRequest, QueryResult,
-    RawKeyValueResponse, SchemaCategoriesResponse, SchemaCategoryInfo, SchemaColumnFamiliesResponse,
-    SearchResponse, StateDiffResponse, StatsResponse, TableInfo, TableListResponse,
-    TransactionDetail, TransactionListResponse, TransactionSummary,
+    ColumnFamilyInfo, ColumnFamilyListResponse, ColumnFamilySchemaInfo, ContractListResponse,
+    ContractResponse, ContractStorageResponse, FilteredTransactionsResponse, IndexStatusResponse,
+    IndexedTransactionInfo, KeyListResponse, QueryRequest, QueryResult, RawKeyValueResponse,
+    SchemaCategoriesResponse, SchemaCategoryInfo, SchemaColumnFamiliesResponse, SearchResponse,
+    StateDiffResponse, StatsResponse, TableInfo, TableListResponse, TransactionDetail,
+    TransactionListResponse, TransactionSummary,
 };
 use wasm_bindgen::prelude::*;
 
@@ -95,13 +95,16 @@ async fn fetch_stats() -> Result<StatsResponse, String> {
 }
 
 async fn fetch_blocks(offset: u64, limit: u64) -> Result<BlockListResponse, String> {
-    gloo_net::http::Request::get(&format!("{}/api/blocks?offset={offset}&limit={limit}", get_api_base()))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())
+    gloo_net::http::Request::get(&format!(
+        "{}/api/blocks?offset={offset}&limit={limit}",
+        get_api_base()
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?
+    .json()
+    .await
+    .map_err(|e| e.to_string())
 }
 
 async fn fetch_block(block_number: u64) -> Result<BlockDetail, String> {
@@ -115,23 +118,32 @@ async fn fetch_block(block_number: u64) -> Result<BlockDetail, String> {
 }
 
 async fn fetch_block_transactions(block_number: u64) -> Result<TransactionListResponse, String> {
-    gloo_net::http::Request::get(&format!("{}/api/blocks/{block_number}/transactions", get_api_base()))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())
+    gloo_net::http::Request::get(&format!(
+        "{}/api/blocks/{block_number}/transactions",
+        get_api_base()
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?
+    .json()
+    .await
+    .map_err(|e| e.to_string())
 }
 
-async fn fetch_transaction(block_number: u64, tx_index: usize) -> Result<TransactionDetail, String> {
-    gloo_net::http::Request::get(&format!("{}/api/blocks/{block_number}/transactions/{tx_index}", get_api_base()))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())
+async fn fetch_transaction(
+    block_number: u64,
+    tx_index: usize,
+) -> Result<TransactionDetail, String> {
+    gloo_net::http::Request::get(&format!(
+        "{}/api/blocks/{block_number}/transactions/{tx_index}",
+        get_api_base()
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?
+    .json()
+    .await
+    .map_err(|e| e.to_string())
 }
 
 async fn fetch_contracts(limit: usize) -> Result<ContractListResponse, String> {
@@ -154,14 +166,20 @@ async fn fetch_contract(address: String) -> Result<ContractResponse, String> {
         .map_err(|e| e.to_string())
 }
 
-async fn fetch_contract_storage(address: String, limit: usize) -> Result<ContractStorageResponse, String> {
-    gloo_net::http::Request::get(&format!("{}/api/contracts/{address}/storage?limit={limit}", get_api_base()))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())
+async fn fetch_contract_storage(
+    address: String,
+    limit: usize,
+) -> Result<ContractStorageResponse, String> {
+    gloo_net::http::Request::get(&format!(
+        "{}/api/contracts/{address}/storage?limit={limit}",
+        get_api_base()
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?
+    .json()
+    .await
+    .map_err(|e| e.to_string())
 }
 
 async fn fetch_classes(limit: usize) -> Result<ClassListResponse, String> {
@@ -185,23 +203,30 @@ async fn fetch_class(class_hash: String) -> Result<ClassResponse, String> {
 }
 
 async fn fetch_state_diff(block_number: u64) -> Result<StateDiffResponse, String> {
-    gloo_net::http::Request::get(&format!("{}/api/blocks/{block_number}/state-diff", get_api_base()))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())
+    gloo_net::http::Request::get(&format!(
+        "{}/api/blocks/{block_number}/state-diff",
+        get_api_base()
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?
+    .json()
+    .await
+    .map_err(|e| e.to_string())
 }
 
 async fn fetch_search(query: String) -> Result<SearchResponse, String> {
-    gloo_net::http::Request::get(&format!("{}/api/search?q={}", get_api_base(), urlencoding::encode(&query)))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())
+    gloo_net::http::Request::get(&format!(
+        "{}/api/search?q={}",
+        get_api_base(),
+        urlencoding::encode(&query)
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?
+    .json()
+    .await
+    .map_err(|e| e.to_string())
 }
 
 async fn fetch_index_status() -> Result<IndexStatusResponse, String> {
@@ -321,7 +346,9 @@ async fn fetch_schema_categories() -> Result<SchemaCategoriesResponse, String> {
         .map_err(|e| e.to_string())
 }
 
-async fn fetch_schema_column_families(category: Option<&str>) -> Result<SchemaColumnFamiliesResponse, String> {
+async fn fetch_schema_column_families(
+    category: Option<&str>,
+) -> Result<SchemaColumnFamiliesResponse, String> {
     let url = match category {
         Some(cat) => format!(
             "{}/api/schema/column-families?category={}",
@@ -364,14 +391,17 @@ async fn execute_sql_query(sql: String, params: Vec<String>) -> Result<QueryResu
     if response.ok() {
         response.json().await.map_err(|e| e.to_string())
     } else {
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
         Err(error_text)
     }
 }
 
 fn truncate_hash(hash: &str) -> String {
     if hash.len() > 16 {
-        format!("{}...{}", &hash[..10], &hash[hash.len()-6..])
+        format!("{}...{}", &hash[..10], &hash[hash.len() - 6..])
     } else {
         hash.to_string()
     }
@@ -556,7 +586,8 @@ fn BlockDetailView(
     on_state_diff: impl Fn(u64) + Clone + Send + Sync + 'static,
 ) -> impl IntoView {
     let block = LocalResource::new(move || async move { fetch_block(block_number).await });
-    let transactions = LocalResource::new(move || async move { fetch_block_transactions(block_number).await });
+    let transactions =
+        LocalResource::new(move || async move { fetch_block_transactions(block_number).await });
     let on_state_diff = std::sync::Arc::new(on_state_diff);
 
     view! {
@@ -709,7 +740,8 @@ fn TransactionDetailView(
     tx_index: usize,
     on_back: impl Fn() + 'static,
 ) -> impl IntoView {
-    let tx = LocalResource::new(move || async move { fetch_transaction(block_number, tx_index).await });
+    let tx =
+        LocalResource::new(move || async move { fetch_transaction(block_number, tx_index).await });
 
     view! {
         <div class="bg-gray-800 rounded-lg p-6">
@@ -900,14 +932,17 @@ fn TransactionDetailView(
 // Contract components
 
 #[component]
-fn ContractRow(
-    contract: ContractResponse,
-    on_click: impl Fn(String) + 'static,
-) -> impl IntoView {
+fn ContractRow(contract: ContractResponse, on_click: impl Fn(String) + 'static) -> impl IntoView {
     let address = contract.address.clone();
     let address_for_click = address.clone();
-    let class_hash = contract.class_hash.clone().unwrap_or_else(|| "None".to_string());
-    let nonce = contract.nonce.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string());
+    let class_hash = contract
+        .class_hash
+        .clone()
+        .unwrap_or_else(|| "None".to_string());
+    let nonce = contract
+        .nonce
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "-".to_string());
 
     view! {
         <tr
@@ -976,10 +1011,7 @@ fn ContractList(on_select: impl Fn(String) + Clone + Send + 'static) -> impl Int
 }
 
 #[component]
-fn ContractDetailView(
-    address: String,
-    on_back: impl Fn() + 'static,
-) -> impl IntoView {
+fn ContractDetailView(address: String, on_back: impl Fn() + 'static) -> impl IntoView {
     let addr = address.clone();
     let addr2 = address.clone();
     let contract = LocalResource::new(move || {
@@ -1092,10 +1124,7 @@ fn ContractDetailView(
 // Class components
 
 #[component]
-fn ClassRow(
-    class: ClassResponse,
-    on_click: impl Fn(String) + 'static,
-) -> impl IntoView {
+fn ClassRow(class: ClassResponse, on_click: impl Fn(String) + 'static) -> impl IntoView {
     let class_hash = class.class_hash.clone();
     let class_hash_for_click = class_hash.clone();
     let class_type = class.class_type.clone();
@@ -1171,10 +1200,7 @@ fn ClassList(on_select: impl Fn(String) + Clone + Send + 'static) -> impl IntoVi
 }
 
 #[component]
-fn ClassDetailView(
-    class_hash: String,
-    on_back: impl Fn() + 'static,
-) -> impl IntoView {
+fn ClassDetailView(class_hash: String, on_back: impl Fn() + 'static) -> impl IntoView {
     let hash = class_hash.clone();
     let class = LocalResource::new(move || {
         let hash = hash.clone();
@@ -1241,11 +1267,9 @@ fn ClassDetailView(
 // State Diff View
 
 #[component]
-fn StateDiffView(
-    block_number: u64,
-    on_back: impl Fn() + 'static,
-) -> impl IntoView {
-    let state_diff = LocalResource::new(move || async move { fetch_state_diff(block_number).await });
+fn StateDiffView(block_number: u64, on_back: impl Fn() + 'static) -> impl IntoView {
+    let state_diff =
+        LocalResource::new(move || async move { fetch_state_diff(block_number).await });
 
     view! {
         <div class="bg-gray-800 rounded-lg p-6">
@@ -1573,7 +1597,11 @@ fn AdvancedFiltersView(
 /// Truncate hex value for display with ellipsis
 fn truncate_hex(hex: &str, max_len: usize) -> String {
     if hex.len() > max_len {
-        format!("{}...{}", &hex[..max_len / 2], &hex[hex.len() - max_len / 4..])
+        format!(
+            "{}...{}",
+            &hex[..max_len / 2],
+            &hex[hex.len() - max_len / 4..]
+        )
     } else {
         hex.to_string()
     }
@@ -1787,9 +1815,7 @@ fn ColumnFamilyRow(
 
 /// Main Raw Data Browser view
 #[component]
-fn RawDataView(
-    on_key_select: impl Fn((String, String)) + Clone + Send + 'static,
-) -> impl IntoView {
+fn RawDataView(on_key_select: impl Fn((String, String)) + Clone + Send + 'static) -> impl IntoView {
     let (expanded_cf, set_expanded_cf) = signal::<Option<String>>(None);
 
     let cfs = LocalResource::new(|| fetch_column_families());
@@ -2177,6 +2203,24 @@ fn StatsCard() -> impl IntoView {
                             Ok(s) => {
                                 let latest = s.latest_block.unwrap_or(0);
                                 let cols = s.column_count;
+                                let version_text = match s.madara_db_version.version {
+                                    Some(v) => format!("v{}", v),
+                                    None => "Unknown".to_string(),
+                                };
+                                let (support_text, support_class) = match s.madara_db_version.supported {
+                                    Some(true) => ("Supported", "text-green-400"),
+                                    Some(false) => ("Unsupported", "text-red-400"),
+                                    None => ("Unknown", "text-yellow-400"),
+                                };
+                                let mut supported_versions = s.madara_db_version.supported_versions.clone();
+                                supported_versions.sort_unstable();
+                                let supported_versions_text = supported_versions
+                                    .into_iter()
+                                    .map(|v| v.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                let show_supported_versions = s.madara_db_version.supported != Some(true);
+                                let version_error = s.madara_db_version.error.clone();
                                 view! {
                                     <div class="space-y-2 text-sm">
                                         <p>
@@ -2189,6 +2233,33 @@ fn StatsCard() -> impl IntoView {
                                             <span class="text-gray-400">"Columns: "</span>
                                             <span class="text-purple-400">{cols}</span>
                                         </p>
+                                        <p>
+                                            <span class="text-gray-400">"Madara DB Version: "</span>
+                                            <span class="text-blue-400">{version_text}</span>
+                                            <span class="text-gray-500">" ("</span>
+                                            <span class=support_class>{support_text}</span>
+                                            <span class="text-gray-500">")"</span>
+                                        </p>
+                                        {if show_supported_versions {
+                                            view! {
+                                                <p class="text-xs text-gray-500">
+                                                    <span class="text-gray-400">"Supported versions: "</span>
+                                                    {supported_versions_text}
+                                                </p>
+                                            }.into_any()
+                                        } else {
+                                            view! { <span></span> }.into_any()
+                                        }}
+                                        {if let Some(err) = version_error {
+                                            view! {
+                                                <p class="text-xs text-yellow-400">
+                                                    <span class="text-gray-400">"Version note: "</span>
+                                                    {err}
+                                                </p>
+                                            }.into_any()
+                                        } else {
+                                            view! { <span></span> }.into_any()
+                                        }}
                                     </div>
                                 }.into_any()
                             },
@@ -2204,11 +2275,7 @@ fn StatsCard() -> impl IntoView {
 }
 
 #[component]
-fn NavItem(
-    label: &'static str,
-    active: bool,
-    on_click: impl Fn() + 'static,
-) -> impl IntoView {
+fn NavItem(label: &'static str, active: bool, on_click: impl Fn() + 'static) -> impl IntoView {
     let class = if active {
         "px-4 py-2 text-left hover:bg-gray-700 rounded text-blue-400 bg-gray-700"
     } else {
@@ -2255,8 +2322,13 @@ fn SearchBar(on_result: impl Fn(Page) + Clone + Send + 'static) -> impl IntoView
                                 }
                             }
                             "transaction" => {
-                                if let (Some(bn), Some(idx)) = (result.block_number, result.tx_index) {
-                                    on_result(Page::TransactionDetail { block_number: bn, tx_index: idx as usize });
+                                if let (Some(bn), Some(idx)) =
+                                    (result.block_number, result.tx_index)
+                                {
+                                    on_result(Page::TransactionDetail {
+                                        block_number: bn,
+                                        tx_index: idx as usize,
+                                    });
                                 }
                             }
                             "contract" => {
@@ -2425,9 +2497,7 @@ fn SchemaCategoryCard(
 }
 
 #[component]
-fn SchemaView(
-    on_cf_select: impl Fn(String) + Clone + Send + 'static,
-) -> impl IntoView {
+fn SchemaView(on_cf_select: impl Fn(String) + Clone + Send + 'static) -> impl IntoView {
     let categories = LocalResource::new(|| fetch_schema_categories());
     let (expanded_category, set_expanded_category) = signal::<Option<String>>(None);
 
@@ -2488,10 +2558,7 @@ fn SchemaView(
 }
 
 #[component]
-fn SchemaDetailView(
-    cf_name: String,
-    on_back: impl Fn() + 'static,
-) -> impl IntoView {
+fn SchemaDetailView(cf_name: String, on_back: impl Fn() + 'static) -> impl IntoView {
     let name = cf_name.clone();
     let schema = LocalResource::new(move || {
         let n = name.clone();
@@ -2768,8 +2835,12 @@ fn format_json_value(value: &serde_json::Value) -> String {
         serde_json::Value::Bool(b) => b.to_string(),
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Array(arr) => serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string()),
-        serde_json::Value::Object(obj) => serde_json::to_string(obj).unwrap_or_else(|_| "{}".to_string()),
+        serde_json::Value::Array(arr) => {
+            serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string())
+        }
+        serde_json::Value::Object(obj) => {
+            serde_json::to_string(obj).unwrap_or_else(|_| "{}".to_string())
+        }
     }
 }
 

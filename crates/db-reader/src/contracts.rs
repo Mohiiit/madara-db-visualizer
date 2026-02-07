@@ -231,7 +231,10 @@ impl DbReader {
         let mut entries = Vec::new();
 
         // Iterate with prefix
-        let iter = self.db.iterator_cf(&cf, IteratorMode::From(&prefix, rocksdb::Direction::Forward));
+        let iter = self.db.iterator_cf(
+            &cf,
+            IteratorMode::From(&prefix, rocksdb::Direction::Forward),
+        );
 
         for item in iter {
             if let Ok((key, value)) = item {

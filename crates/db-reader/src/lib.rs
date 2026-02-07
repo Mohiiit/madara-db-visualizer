@@ -10,6 +10,7 @@ mod queries;
 pub mod raw;
 pub mod state_diff;
 pub mod transactions;
+pub mod version;
 
 pub use blocks::*;
 pub use contracts::*;
@@ -17,6 +18,7 @@ pub use queries::*;
 pub use raw::*;
 pub use state_diff::*;
 pub use transactions::*;
+pub use version::*;
 
 #[derive(Error, Debug)]
 pub enum DbError {

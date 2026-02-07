@@ -1,0 +1,39 @@
+name: madara-db-visualizer
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      # Keep `.db-version` (in RocksDB base path) visible to the container for version detection.
+      # We mount the RocksDB *parent* (`${ROCKSDB_PATH}/..`) at `/madara`, then point DB_PATH to the
+      # RocksDB directory name within that mount (`db` for a standard Madara layout).
+      DB_PATH: /madara/${DB_DIR_NAME:-db}
+      INDEX_PATH: /data/index/index.db
+      PORT: 3000
+    volumes:
+      - type: bind
+        source: ${ROCKSDB_PATH:-./sample-db}/..
+        target: /madara
+        read_only: true
+      - type: volume
+        source: index-data
+        target: /data/index
+    ports:
+      - "${API_PORT:-3000}:3000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  index-data:

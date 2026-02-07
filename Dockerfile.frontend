@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1.7
+
+FROM rust:1.89-slim-bookworm AS builder
+
+# Trunk builds the WASM bundle; binaryen provides wasm-opt for the data-wasm-opt="z" setting.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    binaryen \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add wasm32-unknown-unknown
+
+ARG TRUNK_VERSION=0.20.3
+RUN cargo install trunk --locked --version "${TRUNK_VERSION}"
+
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock Trunk.toml index.html input.css output.css ./
+COPY crates ./crates
+
+RUN trunk build --release
+
+FROM nginx:1.27-alpine
+
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80
