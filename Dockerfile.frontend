@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     binaryen \
+    python3 \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -20,8 +21,10 @@ WORKDIR /app
 
 COPY Cargo.toml Cargo.lock Trunk.toml index.html input.css output.css ./
 COPY crates ./crates
+COPY scripts ./scripts
 
 RUN trunk build --release
+RUN python3 /app/scripts/patch_wasm_table.py /app/dist
 
 FROM nginx:1.27-alpine
 
