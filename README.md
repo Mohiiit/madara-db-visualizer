@@ -73,6 +73,10 @@ Write custom SQL queries against the indexed data (blocks, transactions, events,
 
 Makimono ships the visualizer as a **single command**, and automatically selects the correct toolchain for your Madara DB version (from `.db-version`).
 
+**Prerequisites (for install scripts):**
+- macOS/Linux: `curl`, `tar`, and a SHA256 tool (`sha256sum` or `shasum` or `openssl`)
+- Windows: PowerShell with `Invoke-WebRequest` and `Expand-Archive`
+
 **Install (macOS/Linux):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Mohiiit/madara-db-visualizer/main/install.sh | bash
@@ -98,6 +102,7 @@ Open `http://127.0.0.1:8080`.
 **Notes:**
 - You can override the detection via `--db-version <N>`.
 - Use `--offline` to disable downloads (must already have the toolchain installed).
+- `--open` defaults to `true` on macOS/Windows and `false` on Linux (override with `--open=true|false`).
 
 ### Option B: Docker Compose
 
