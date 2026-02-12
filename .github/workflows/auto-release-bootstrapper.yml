@@ -36,6 +36,9 @@ jobs:
             exit 0
           fi
 
+          # Read the bootstrapper version from Cargo.toml (workspace.package.version).
+          ver_now="$(python3 -c 'import tomllib; from pathlib import Path; d=tomllib.loads(Path(\"Cargo.toml\").read_text()); print(d[\"workspace\"][\"package\"][\"version\"])')"
+
           # Determine what changed in this push.
           if [[ -n "$BEFORE" && "$BEFORE" != "0000000000000000000000000000000000000000" ]]; then
             CHANGED="$(git diff --name-only "$BEFORE" "$SHA" || true)"
@@ -43,21 +46,40 @@ jobs:
             CHANGED="$(git diff --name-only "${SHA}^" "$SHA" 2>/dev/null || true)"
           fi
 
-          # Only auto-tag when user-facing distribution changes.
-          # This keeps releases from being created for unrelated edits.
-          if echo "$CHANGED" | rg -q '^(crates/makimono/|install\\.sh|install\\.ps1|\\.github/workflows/release-bootstrapper\\.yml)'; then
-            echo "reason=bootstrapper/distribution files changed" >> "$GITHUB_OUTPUT"
-            echo "should_tag=true" >> "$GITHUB_OUTPUT"
+          # Only auto-tag when the Cargo.toml version was bumped in this push.
+          if echo "$CHANGED" | rg -q '^Cargo\\.toml$'; then
+            # Compare previous version to current version.
+            if [[ -n "$BEFORE" && "$BEFORE" != "0000000000000000000000000000000000000000" ]]; then
+              ver_before="$(git show "${BEFORE}:Cargo.toml" | python3 -c 'import sys,tomllib; d=tomllib.loads(sys.stdin.read()); print(d[\"workspace\"][\"package\"][\"version\"])')"
+            else
+              ver_before=""
+            fi
+
+            if [[ -n "$ver_before" && "$ver_before" == "$ver_now" ]]; then
+              echo "reason=Cargo.toml changed but version did not bump ($ver_now)" >> "$GITHUB_OUTPUT"
+              echo "should_tag=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "reason=version bump detected ($ver_before -> $ver_now)" >> "$GITHUB_OUTPUT"
+              echo "should_tag=true" >> "$GITHUB_OUTPUT"
+              echo "version=$ver_now" >> "$GITHUB_OUTPUT"
+            fi
           else
-            echo "reason=no bootstrapper/distribution changes detected" >> "$GITHUB_OUTPUT"
+            echo "reason=no Cargo.toml change; no version bump to release" >> "$GITHUB_OUTPUT"
             echo "should_tag=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Tag next patch release
+      - name: Tag bootstrapper release (from Cargo.toml version)
         if: steps.decide.outputs.should_tag == 'true'
         shell: bash
         run: |
           set -euo pipefail
+
+          VER="${{ steps.decide.outputs.version }}"
+          if [[ -z "$VER" ]]; then
+            echo "missing version output from decide step" >&2
+            exit 1
+          fi
+          next="makimono-${VER}"
 
           # If this commit is already tagged with a makimono-x.y.z tag, do nothing.
           if git tag --points-at "$GITHUB_SHA" | rg -q '^makimono-[0-9]+\\.[0-9]+\\.[0-9]+$'; then
@@ -65,14 +87,10 @@ jobs:
             exit 0
           fi
 
-          latest="$(git tag -l 'makimono-[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1 || true)"
-          if [[ -z "$latest" ]]; then
-            next="makimono-0.1.0"
-          else
-            ver="${latest#makimono-}"
-            IFS=. read -r major minor patch <<<"$ver"
-            patch="$((patch+1))"
-            next="makimono-${major}.${minor}.${patch}"
+          # If the tag already exists, do nothing.
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "tag already exists: $next"
+            exit 0
           fi
 
           git config user.name "github-actions[bot]"
