@@ -26,12 +26,16 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install Trunk
-        run: cargo install trunk
+        run: cargo install trunk --locked --version 0.20.3
 
       - name: Build Frontend
         run: |
           cd crates/frontend
-          trunk build index.html --release --public-url /madara-db-visualizer/
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          trunk build index.html --release --public-url "/${REPO_NAME}/"
+
+      - name: Patch WASM (Chromium externref table)
+        run: python3 scripts/patch_wasm_table.py crates/frontend/dist
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

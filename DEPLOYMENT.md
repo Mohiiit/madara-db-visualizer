@@ -1,4 +1,4 @@
-# Deployment Plan - Madara DB Visualizer
+# Deployment Plan - Makimono (Madara DB Visualizer)
 
 ## Overview
 
@@ -12,7 +12,7 @@ Deploy the full visualizer (frontend + API + sample DB) for public demo access.
 │   GitHub Actions                                                 │
 │        │                                                         │
 │        ├──► Build Frontend ──► GitHub Pages (Static)            │
-│        │                       https://mohiiit.github.io/...    │
+│        │                       https://mohiiit.github.io/makimono │
 │        │                                                         │
 │        └──► Build API Docker ──► Render.com (Free Tier)         │
 │                                  https://madara-viz-api.onrender│
@@ -74,7 +74,7 @@ Deploy the full visualizer (frontend + API + sample DB) for public demo access.
 - [ ] Add settings icon to change API URL
 
 ### Task 3.2: Build frontend for GitHub Pages
-- [ ] Update trunk build with `--public-url /madara-db-visualizer/`
+- [ ] Update trunk build with `--public-url /makimono/`
 - [ ] Test built files work with remote API
 - [ ] **Feedback:** Open `dist/index.html`, check network tab for correct API calls
 
@@ -130,7 +130,7 @@ Deploy the full visualizer (frontend + API + sample DB) for public demo access.
 ---
 
 ## Phase 6: Enable GitHub Pages
-**Goal:** Frontend accessible at mohiiit.github.io/madara-db-visualizer
+**Goal:** Frontend accessible at mohiiit.github.io/makimono
 
 ### Task 6.1: Enable GitHub Pages
 - [ ] Go to repo Settings → Pages
@@ -143,7 +143,7 @@ Deploy the full visualizer (frontend + API + sample DB) for public demo access.
 - [ ] **Feedback:** GitHub Action runs and deploys
 
 ### Task 6.3: Verify full deployment
-- [ ] Open `https://mohiiit.github.io/madara-db-visualizer`
+- [ ] Open `https://mohiiit.github.io/makimono`
 - [ ] Check blocks load
 - [ ] Check schema browser works
 - [ ] Check SQL console works
@@ -194,7 +194,7 @@ docker build -t madara-viz-api .
 docker run -p 3000:3000 madara-viz-api
 
 # Phase 3: Build frontend
-cd crates/frontend && trunk build index.html --release --public-url /madara-db-visualizer/
+cd crates/frontend && trunk build index.html --release --public-url /makimono/
 
 # Smoke test
 curl -s https://YOUR-RENDER-URL/api/health
@@ -214,7 +214,7 @@ If deployment breaks:
 
 ## Success Criteria
 
-- [ ] `https://mohiiit.github.io/madara-db-visualizer` loads
+- [ ] `https://mohiiit.github.io/makimono` loads
 - [ ] Can browse blocks, transactions, contracts
 - [ ] Schema browser shows all 27 column families
 - [ ] SQL console executes queries
