@@ -10,10 +10,12 @@ use std::process::{Command, Stdio};
 use db_reader::version::detect_madara_db_version_for_db_path;
 
 const DEFAULT_REPO: &str = "Mohiiit/makimono";
+const SUPPORTED_MADARA_DB_VERSIONS: &[u32] = &[8, 9];
 
 #[derive(Parser, Debug)]
 #[command(name = "makimono")]
 #[command(about = "Makimono: Madara DB Visualizer toolchain manager")]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     cmd: Commands,
@@ -61,6 +63,30 @@ enum Commands {
     Toolchain {
         #[command(subcommand)]
         cmd: ToolchainCmd,
+    },
+
+    /// Check system + DB compatibility and report actionable issues.
+    ///
+    /// Use this when `makimono run` fails, or before running on a new machine/DB.
+    Doctor {
+        /// Optional Madara base-path or RocksDB directory to validate.
+        path: Option<PathBuf>,
+
+        /// Force a DB version instead of reading `.db-version`
+        #[arg(long)]
+        db_version: Option<u32>,
+
+        /// GitHub repo to check/download toolchains from, like owner/repo
+        #[arg(long, default_value = DEFAULT_REPO)]
+        repo: String,
+
+        /// Explicit release tag to validate (defaults to alias tag == db version)
+        #[arg(long)]
+        tag: Option<String>,
+
+        /// Do not perform any network requests (only local checks).
+        #[arg(long)]
+        offline: bool,
     },
 
     /// Update the Makimono bootstrapper itself (best-effort)
@@ -167,6 +193,20 @@ fn main() {
             }
             ToolchainCmd::List => cmd_toolchain_list(&ctx),
         },
+        Commands::Doctor {
+            path,
+            db_version,
+            repo,
+            tag,
+            offline,
+        } => cmd_doctor(
+            &ctx,
+            path.as_deref(),
+            db_version,
+            &repo,
+            tag.as_deref(),
+            offline,
+        ),
         Commands::SelfUpdate { .. } => {
             // Keeping this as a stub for now; installing/updating a running binary is platform
             // specific and is better done via install scripts.
@@ -180,6 +220,233 @@ fn main() {
         eprintln!("error: {e}");
         std::process::exit(1);
     }
+}
+
+#[derive(Clone, Copy)]
+enum CheckStatus {
+    Ok,
+    Warn,
+    Fail,
+}
+
+fn print_check(status: CheckStatus, label: &str, msg: &str) {
+    let s = match status {
+        CheckStatus::Ok => "OK",
+        CheckStatus::Warn => "WARN",
+        CheckStatus::Fail => "FAIL",
+    };
+    println!("[{s}] {label}: {msg}");
+}
+
+fn cmd_doctor(
+    ctx: &Ctx,
+    path: Option<&Path>,
+    forced_version: Option<u32>,
+    repo: &str,
+    tag: Option<&str>,
+    offline: bool,
+) -> Result<(), String> {
+    let mut failed = false;
+
+    // 1) Home dir should be writable.
+    match fs::create_dir_all(&ctx.home) {
+        Ok(()) => {
+            let probe = ctx.home.join(".doctor-write-probe");
+            match fs::write(&probe, b"ok") {
+                Ok(()) => {
+                    let _ = fs::remove_file(&probe);
+                    print_check(
+                        CheckStatus::Ok,
+                        "makimono home",
+                        &format!("writable ({})", ctx.home.display()),
+                    );
+                }
+                Err(e) => {
+                    failed = true;
+                    print_check(
+                        CheckStatus::Fail,
+                        "makimono home",
+                        &format!("not writable ({}): {e}", ctx.home.display()),
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            failed = true;
+            print_check(
+                CheckStatus::Fail,
+                "makimono home",
+                &format!("cannot create ({}) {e}", ctx.home.display()),
+            );
+        }
+    }
+
+    // 2) DB path checks (optional).
+    let mut db_dir: Option<PathBuf> = None;
+    let mut detected_version: Option<u32> = None;
+
+    if let Some(p) = path {
+        match resolve_rocksdb_dir(p) {
+            Ok(dir) => {
+                let current = dir.join("CURRENT");
+                if current.is_file() {
+                    print_check(
+                        CheckStatus::Ok,
+                        "rocksdb",
+                        &format!("found CURRENT ({})", current.display()),
+                    );
+                } else {
+                    print_check(
+                        CheckStatus::Warn,
+                        "rocksdb",
+                        "CURRENT not found; DB may still be valid but this is unusual",
+                    );
+                }
+                db_dir = Some(dir.clone());
+
+                let det = detect_madara_db_version_for_db_path(&dir);
+                if let Some(v) = det.version {
+                    detected_version = Some(v);
+                    let src = det
+                        .source_path
+                        .as_ref()
+                        .map(|x| x.display().to_string())
+                        .unwrap_or_else(|| "(unknown)".to_string());
+                    let st = if SUPPORTED_MADARA_DB_VERSIONS.contains(&v) {
+                        CheckStatus::Ok
+                    } else {
+                        CheckStatus::Warn
+                    };
+                    print_check(st, ".db-version", &format!("{v} (from {src})"));
+                    if !SUPPORTED_MADARA_DB_VERSIONS.contains(&v) {
+                        print_check(
+                            CheckStatus::Warn,
+                            "compat",
+                            &format!(
+                                "db version {v} not in validated set {:?}; UI may be incomplete",
+                                SUPPORTED_MADARA_DB_VERSIONS
+                            ),
+                        );
+                    }
+                } else if let Some(err) = det.error {
+                    print_check(CheckStatus::Warn, ".db-version", &err);
+                } else {
+                    print_check(
+                        CheckStatus::Warn,
+                        ".db-version",
+                        "not found (pass --db-version N to force a toolchain)",
+                    );
+                }
+            }
+            Err(e) => {
+                failed = true;
+                print_check(CheckStatus::Fail, "rocksdb", &e);
+            }
+        }
+    } else {
+        print_check(CheckStatus::Ok, "rocksdb", "skipped (no path provided)");
+    }
+
+    // 3) Toolchain availability checks.
+    let db_version = forced_version.or(detected_version);
+    if let Some(v) = db_version {
+        // Toolchains default to alias tag == db version.
+        let tag = tag.map(|s| s.to_string()).unwrap_or_else(|| v.to_string());
+
+        let bin = toolchain_bin_path(ctx, v, &tag);
+        if bin.exists() {
+            print_check(
+                CheckStatus::Ok,
+                "toolchain",
+                &format!("installed dbv{v} tag {tag} ({})", bin.display()),
+            );
+
+            // Can we execute it?
+            let help = Command::new(&bin)
+                .arg("--help")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            match help {
+                Ok(st) if st.success() => {
+                    print_check(CheckStatus::Ok, "toolchain exec", "ok");
+                }
+                Ok(st) => {
+                    failed = true;
+                    print_check(
+                        CheckStatus::Fail,
+                        "toolchain exec",
+                        &format!("failed (exit {st})"),
+                    );
+                }
+                Err(e) => {
+                    failed = true;
+                    print_check(CheckStatus::Fail, "toolchain exec", &format!("{e}"));
+                }
+            }
+        } else if offline {
+            failed = true;
+            print_check(
+                CheckStatus::Fail,
+                "toolchain",
+                &format!(
+                    "missing dbv{v} tag {tag} (offline); install via `makimono toolchain install {v}`"
+                ),
+            );
+        } else {
+            print_check(
+                CheckStatus::Warn,
+                "toolchain",
+                &format!("not installed locally (dbv{v} tag {tag}); will download on `run`"),
+            );
+        }
+
+        if !offline {
+            // Check that the release is reachable (SHA256SUMS).
+            let base = format!("https://github.com/{repo}/releases/download/{tag}");
+            let sums_url = format!("{base}/SHA256SUMS");
+            match http_get_bytes(&sums_url) {
+                Ok(_) => {
+                    print_check(
+                        CheckStatus::Ok,
+                        "network",
+                        &format!("reachable ({sums_url})"),
+                    );
+                }
+                Err(e) => {
+                    failed = true;
+                    print_check(
+                        CheckStatus::Fail,
+                        "network",
+                        &format!("cannot reach release assets: {e}"),
+                    );
+                }
+            }
+        } else {
+            print_check(CheckStatus::Ok, "network", "skipped (--offline)");
+        }
+
+        // Extra: if we have a db dir, show where index would live.
+        if let Some(db_dir) = db_dir.as_ref() {
+            let index_path = default_index_path(ctx, db_dir);
+            print_check(
+                CheckStatus::Ok,
+                "index",
+                &format!("default path ({})", index_path.display()),
+            );
+        }
+    } else {
+        print_check(
+            CheckStatus::Warn,
+            "toolchain",
+            "db version unknown (pass a path with .db-version or --db-version N)",
+        );
+    }
+
+    if failed {
+        return Err("doctor found blocking issues".to_string());
+    }
+    Ok(())
 }
 
 struct Ctx {

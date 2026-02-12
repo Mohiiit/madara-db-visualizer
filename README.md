@@ -1,5 +1,7 @@
 # Makimono (Madara DB Visualizer)
 
+![Makimono scroll](docs/images/makimono-scroll.svg)
+
 ```text
 Makimono: scroll your Madara DB into a UI, in one command.
 ```
@@ -63,6 +65,19 @@ makimono run ./sample-db
 ```
 
 Open `http://127.0.0.1:8080`.
+
+## Doctor
+
+If `makimono run` fails (or before running on a new machine/DB), run:
+
+```bash
+makimono doctor /path/to/madara
+# or
+makimono doctor /path/to/madara/db
+```
+
+`doctor` prints actionable checks (DB path, `.db-version`, toolchain availability, network reachability) and exits non-zero if it finds a blocking issue.
+
 
 ## Compatibility (Madara DB Versions)
 
