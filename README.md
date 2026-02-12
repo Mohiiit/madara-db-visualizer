@@ -1,10 +1,9 @@
 # Makimono (Madara DB Visualizer)
 
-![Makimono scroll](docs/images/makimono-scroll.svg)
+<p align="center">
+  <img alt="Makimono scroll" src="docs/images/makimono-scroll.svg" width="720" />
+</p>
 
-```text
-Makimono: scroll your Madara DB into a UI, in one command.
-```
 
 [![Deploy to GitHub Pages](https://github.com/Mohiiit/makimono/actions/workflows/deploy.yml/badge.svg)](https://github.com/Mohiiit/makimono/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)

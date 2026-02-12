@@ -1,45 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="320" viewBox="0 0 960 320" role="img" aria-label="Makimono scroll logo">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-label="Makimono scroll">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0b1220"/>
-      <stop offset="1" stop-color="#0a1f2c"/>
-    </linearGradient>
     <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#f7f1df"/>
-      <stop offset="1" stop-color="#e8dcc0"/>
+      <stop offset="0" stop-color="#faf2dc"/>
+      <stop offset="1" stop-color="#e7d5b0"/>
+    </linearGradient>
+    <linearGradient id="wood" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9bf8a"/>
+      <stop offset="1" stop-color="#b88d4f"/>
     </linearGradient>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity="0.35"/>
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000" flood-opacity="0.28"/>
     </filter>
   </defs>
 
-  <rect x="0" y="0" width="960" height="320" fill="url(#bg)"/>
-
-  <!-- Scroll body -->
+  <!-- Transparent background so it doesn't look like a huge banner in README -->
   <g filter="url(#shadow)">
-    <rect x="220" y="72" width="520" height="176" rx="28" fill="url(#paper)" stroke="#b89a66" stroke-width="6"/>
+    <!-- Paper -->
+    <rect x="250" y="92" width="700" height="176" rx="30" fill="url(#paper)" stroke="#b58a4d" stroke-width="6"/>
 
     <!-- Left roll -->
-    <circle cx="220" cy="160" r="58" fill="#e0d1b1" stroke="#b89a66" stroke-width="6"/>
-    <circle cx="220" cy="160" r="22" fill="#c6a26b"/>
+    <circle cx="250" cy="180" r="66" fill="#eddcb8" stroke="#b58a4d" stroke-width="6"/>
+    <circle cx="250" cy="180" r="26" fill="url(#wood)"/>
 
     <!-- Right roll -->
-    <circle cx="740" cy="160" r="58" fill="#e0d1b1" stroke="#b89a66" stroke-width="6"/>
-    <circle cx="740" cy="160" r="22" fill="#c6a26b"/>
+    <circle cx="950" cy="180" r="66" fill="#eddcb8" stroke="#b58a4d" stroke-width="6"/>
+    <circle cx="950" cy="180" r="26" fill="url(#wood)"/>
 
     <!-- Ink lines -->
-    <path d="M300 132 H660" stroke="#2b2b2b" stroke-width="6" stroke-linecap="round" opacity="0.75"/>
-    <path d="M300 168 H620" stroke="#2b2b2b" stroke-width="6" stroke-linecap="round" opacity="0.65"/>
-    <path d="M300 204 H640" stroke="#2b2b2b" stroke-width="6" stroke-linecap="round" opacity="0.55"/>
+    <path d="M345 150 H860" stroke="#2b2b2b" stroke-width="7" stroke-linecap="round" opacity="0.55"/>
+    <path d="M345 188 H820" stroke="#2b2b2b" stroke-width="7" stroke-linecap="round" opacity="0.45"/>
+    <path d="M345 226 H845" stroke="#2b2b2b" stroke-width="7" stroke-linecap="round" opacity="0.35"/>
 
     <!-- Seal -->
-    <circle cx="620" cy="120" r="16" fill="#c03a2b" opacity="0.9"/>
-  </g>
-
-  <!-- Title -->
-  <g font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace" fill="#e6edf3">
-    <text x="48" y="92" font-size="44" font-weight="700">makimono</text>
-    <text x="48" y="136" font-size="18" opacity="0.9">Madara DB Visualizer toolchain</text>
-    <text x="48" y="196" font-size="16" opacity="0.75">scroll your RocksDB into a UI</text>
+    <circle cx="835" cy="138" r="18" fill="#c03a2b" opacity="0.9"/>
   </g>
 </svg>
