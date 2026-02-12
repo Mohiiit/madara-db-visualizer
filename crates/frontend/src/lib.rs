@@ -45,7 +45,7 @@ fn get_api_base() -> &'static str {
             // Check if running locally
             if let Ok(host) = window.location().hostname() {
                 if host == "localhost" || host == "127.0.0.1" {
-                    return "http://localhost:3000".to_string();
+                    return "".to_string();
                 }
             }
         }

@@ -4,6 +4,11 @@ A web-based **Database Inspector** for Madara's RocksDB - like pgAdmin but for b
 
 ## Screenshots
 
+### Makimono (Single Port: UI + API)
+Run `makimono-viz` (the toolchain binary) to serve the UI and API from the same origin.
+
+![Makimono UI](docs/images/09-makimono-viz.png)
+
 ### Docker Compose (Local)
 Run the full app (API + web UI) with a single command and a local Madara RocksDB path.
 
@@ -64,7 +69,37 @@ Write custom SQL queries against the indexed data (blocks, transactions, events,
 
 ## Quick Start
 
-### Option A: Docker Compose (Recommended)
+### Option A: Makimono (Single Command, No Docker)
+
+Makimono ships the visualizer as a **single command**, and automatically selects the correct toolchain for your Madara DB version (from `.db-version`).
+
+**Install (macOS/Linux):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Mohiiit/madara-db-visualizer/main/install.sh | bash
+```
+
+**Install (Windows PowerShell):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/Mohiiit/madara-db-visualizer/main/install.ps1 | iex
+```
+
+**Run:**
+```bash
+# Pass either Madara base-path or RocksDB directory
+makimono run ~/.madara
+makimono run ~/.madara/db
+
+# Or run the bundled sample DB
+makimono run ./sample-db
+```
+
+Open `http://127.0.0.1:8080`.
+
+**Notes:**
+- You can override the detection via `--db-version <N>`.
+- Use `--offline` to disable downloads (must already have the toolchain installed).
+
+### Option B: Docker Compose
 
 **Prerequisites:**
 - Docker Desktop (macOS/Windows) or Docker Engine (Linux)
@@ -111,7 +146,7 @@ ROCKSDB_PATH=~/.madara/db docker compose -f compose.yaml up --build
 # ROCKSDB_PATH=/path/to/custom-db DB_DIR_NAME=custom-db docker compose -f compose.yaml up --build
 ```
 
-### Option B: Local Build (Rust + Trunk)
+### Option C: Local Build (Rust + Trunk)
 
 #### Prerequisites
 
@@ -144,13 +179,14 @@ npm run css
 git clone https://github.com/Mohiiit/madara-db-visualizer.git
 cd madara-db-visualizer
 
-# Build the API server
-cargo build -p api --release
+# Build the standalone API server (no UI embedding)
+cargo build -p api --release --bin madara-db-visualizer-api
 
-# Build the frontend
-cd crates/frontend
-trunk build index.html --release
-cd ../..
+# Build embedded UI assets (required for makimono-viz)
+./scripts/build_dist.sh
+
+# Build the single-port server (UI + API)
+cargo build -p api --release --features embedded-ui --bin makimono-viz
 ```
 
 #### Step 2: Find Your Madara Database Path
@@ -178,18 +214,23 @@ ls ~/.madara/db/*.sst  # optional sanity check
 
 #### Step 3: Start the Servers
 
-**Terminal 1 - API Server:**
+**Option 1: Single port (UI + API):**
 ```bash
 # Replace with your actual database path
-./target/release/api --db-path ~/.madara/db
+./target/release/makimono-viz --db-path ~/.madara/db
 
 # Or with cargo
-cargo run -p api --release -- --db-path ~/.madara/db
+cargo run -p api --release --features embedded-ui --bin makimono-viz -- --db-path ~/.madara/db
 ```
 
-**Terminal 2 - Frontend Server:**
+Open `http://127.0.0.1:8080`.
+
+**Option 2: Separate ports (API + frontend dev server):**
 ```bash
-# Serve the built frontend
+# Terminal 1 - API server (CORS enabled)
+./target/release/madara-db-visualizer-api --db-path ~/.madara/db --index-path /tmp/madara_visualizer_index.db --port 3000
+
+# Terminal 2 - Serve the built frontend
 cd crates/frontend/dist
 python3 -m http.server 8080
 ```
@@ -198,12 +239,14 @@ python3 -m http.server 8080
 
 Open http://localhost:8080 in your browser.
 
+If you're using separate ports, you may need to set the API base via `?api=http://127.0.0.1:3000` (or via `localStorage["api_url"]`).
+
 ## Configuration
 
 ### API Server Options
 
 ```bash
-./target/release/api --help
+./target/release/madara-db-visualizer-api --help
 
 Options:
   --db-path <PATH>      Path to the Madara RocksDB database directory (usually `<base-path>/db`)

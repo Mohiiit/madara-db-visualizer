@@ -1,0 +1,64 @@
+name: Update alias release
+
+on:
+  workflow_dispatch:
+    inputs:
+      alias_tag:
+        description: "Alias tag to update (e.g. 9 or makimono)"
+        required: true
+        type: string
+      target_tag:
+        description: "Immutable tag to mirror (e.g. 9.0.1 or makimono-0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update alias tag + recreate alias release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ALIAS="${{ inputs.alias_tag }}"
+          TARGET="${{ inputs.target_tag }}"
+
+          # Resolve the target commit and force-move the alias git tag.
+          git fetch --tags --force
+          COMMIT="$(git rev-list -n 1 "$TARGET")"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "$ALIAS" "$COMMIT"
+          git push -f origin "$ALIAS"
+
+          work="$(mktemp -d)"
+          mkdir -p "$work/in" "$work/out"
+
+          # Download all target release assets.
+          gh release download "$TARGET" --dir "$work/in"
+
+          # Drop the target SHA256SUMS; we'll regenerate it for the alias assets.
+          rm -f "$work/in/SHA256SUMS" || true
+
+          # Rename assets to match alias naming convention: filenames include the tag.
+          shopt -s nullglob
+          for f in "$work/in"/*; do
+            base="$(basename "$f")"
+            out="$base"
+            out="${out/$TARGET/$ALIAS}"
+            cp "$f" "$work/out/$out"
+          done
+
+          (cd "$work/out" && sha256sum * > SHA256SUMS)
+
+          # Recreate alias release to avoid duplicate assets.
+          gh release delete "$ALIAS" -y || true
+          gh release create "$ALIAS" --target "$COMMIT" --title "$ALIAS" --notes "Alias release for $TARGET" "$work/out"/*
+
