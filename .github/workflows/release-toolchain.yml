@@ -3,6 +3,7 @@ name: Release toolchain (makimono-viz)
 on:
   push:
     tags:
+      # Numeric toolchain tags only, like 9.0.1
       - "[0-9]*.[0-9]*.[0-9]*"
 
 permissions:
@@ -10,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: build (${{ matrix.os }})
+    name: build (${{ matrix.os_name }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -19,22 +20,31 @@ jobs:
           - os: ubuntu-22.04
             os_name: linux
             arch: x64
-          - os: macos-13
-            os_name: macos
-            arch: x64
+            target: x86_64-unknown-linux-gnu
+
+          # GitHub-hosted macos-13 runners are not available for this repo.
+          # Build both macOS arch binaries on macos-14.
           - os: macos-14
             os_name: macos
             arch: arm64
+            target: aarch64-apple-darwin
+
+          - os: macos-14
+            os_name: macos
+            arch: x64
+            target: x86_64-apple-darwin
+
           - os: windows-2022
             os_name: windows
             arch: x64
+            target: x86_64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown,${{ matrix.target }}
 
       - uses: actions/setup-node@v4
         with:
@@ -50,7 +60,7 @@ jobs:
 
       - name: Build makimono-viz
         shell: bash
-        run: cargo build -p api --release --features embedded-ui --bin makimono-viz
+        run: cargo build -p api --release --features embedded-ui --bin makimono-viz --target ${{ matrix.target }}
 
       - name: Package (unix)
         if: runner.os != 'Windows'
@@ -62,7 +72,7 @@ jobs:
           ARCH="${{ matrix.arch }}"
 
           mkdir -p pkg/bin
-          cp target/release/makimono-viz pkg/bin/makimono-viz
+          cp "target/${{ matrix.target }}/release/makimono-viz" pkg/bin/makimono-viz
           tar -czf "makimono-viz-${TAG}-${OS}-${ARCH}.tar.gz" -C pkg .
 
       - name: Package (windows)
@@ -74,7 +84,7 @@ jobs:
           $Arch = "${{ matrix.arch }}"
 
           New-Item -ItemType Directory -Force -Path pkg/bin | Out-Null
-          Copy-Item -Force target/release/makimono-viz.exe pkg/bin/makimono-viz.exe
+          Copy-Item -Force "target/${{ matrix.target }}/release/makimono-viz.exe" pkg/bin/makimono-viz.exe
           Compress-Archive -Path pkg/* -DestinationPath ("makimono-viz-$Tag-$Os-$Arch.zip") -Force
 
       - uses: actions/upload-artifact@v4
@@ -108,7 +118,7 @@ jobs:
           mkdir -p out/immutable out/alias
 
           # Flatten artifacts into a single dir.
-          find dist -type f \( -name "makimono-viz-*.tar.gz" -o -name "makimono-viz-*.zip" \) -print -exec cp {} out/immutable/ \\;
+          find dist -type f \( -name "makimono-viz-*.tar.gz" -o -name "makimono-viz-*.zip" \) -print -exec cp {} out/immutable/ \;
 
           # Create alias-named copies (makimono downloads by alias tag + alias file names).
           for f in out/immutable/makimono-viz-"${TAG}"-*; do

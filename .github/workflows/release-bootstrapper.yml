@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: build (${{ matrix.os }})
+    name: build (${{ matrix.os_name }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -19,30 +19,41 @@ jobs:
           - os: ubuntu-22.04
             os_name: linux
             arch: x64
-          - os: macos-13
-            os_name: macos
-            arch: x64
+            target: x86_64-unknown-linux-gnu
+
+          # GitHub-hosted macos-13 runners are not available for this repo.
+          # Build both macOS arch binaries on macos-14.
           - os: macos-14
             os_name: macos
             arch: arm64
+            target: aarch64-apple-darwin
+
+          - os: macos-14
+            os_name: macos
+            arch: x64
+            target: x86_64-apple-darwin
+
           - os: windows-2022
             os_name: windows
             arch: x64
+            target: x86_64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Build makimono
         shell: bash
         if: runner.os != 'Windows'
-        run: cargo build -p makimono --release
+        run: cargo build -p makimono --release --target ${{ matrix.target }}
 
       - name: Build makimono (windows)
         shell: pwsh
         if: runner.os == 'Windows'
-        run: cargo build -p makimono --release
+        run: cargo build -p makimono --release --target ${{ matrix.target }}
 
       - name: Package (unix)
         if: runner.os != 'Windows'
@@ -53,12 +64,12 @@ jobs:
           OS="${{ matrix.os_name }}"
           ARCH="${{ matrix.arch }}"
 
-          cp target/release/makimono ./makimono
+          cp "target/${{ matrix.target }}/release/makimono" ./makimono
           tar -czf "makimono-${TAG}-${OS}-${ARCH}.tar.gz" makimono
           rm -f ./makimono
 
           # Also produce alias-named asset for the moving `makimono` tag.
-          cp target/release/makimono ./makimono
+          cp "target/${{ matrix.target }}/release/makimono" ./makimono
           tar -czf "makimono-makimono-${OS}-${ARCH}.tar.gz" makimono
           rm -f ./makimono
 
@@ -70,11 +81,11 @@ jobs:
           $Arch = "${{ matrix.arch }}"
           $Tag = $env:GITHUB_REF_NAME
 
-          Copy-Item -Force target/release/makimono.exe makimono.exe
+          Copy-Item -Force "target/${{ matrix.target }}/release/makimono.exe" makimono.exe
           Compress-Archive -Path makimono.exe -DestinationPath ("makimono-$Tag-$Os-$Arch.zip") -Force
           Remove-Item -Force makimono.exe
 
-          Copy-Item -Force target/release/makimono.exe makimono.exe
+          Copy-Item -Force "target/${{ matrix.target }}/release/makimono.exe" makimono.exe
           Compress-Archive -Path makimono.exe -DestinationPath ("makimono-makimono-$Os-$Arch.zip") -Force
           Remove-Item -Force makimono.exe
 
@@ -108,8 +119,8 @@ jobs:
 
           mkdir -p out/immutable out/alias
 
-          find dist -type f \( -name "makimono-${TAG}-*.tar.gz" -o -name "makimono-${TAG}-*.zip" \) -print -exec cp {} out/immutable/ \\;
-          find dist -type f \( -name "makimono-makimono-*.tar.gz" -o -name "makimono-makimono-*.zip" \) -print -exec cp {} out/alias/ \\;
+          find dist -type f \( -name "makimono-${TAG}-*.tar.gz" -o -name "makimono-${TAG}-*.zip" \) -print -exec cp {} out/immutable/ \;
+          find dist -type f \( -name "makimono-makimono-*.tar.gz" -o -name "makimono-makimono-*.zip" \) -print -exec cp {} out/alias/ \;
 
           (cd out/immutable && sha256sum makimono-${TAG}-* > SHA256SUMS)
           (cd out/alias && sha256sum makimono-makimono-* > SHA256SUMS)
@@ -138,4 +149,3 @@ jobs:
           files: |
             out/alias/makimono-*
             out/alias/SHA256SUMS
-
