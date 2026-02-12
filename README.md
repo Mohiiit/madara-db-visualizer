@@ -1,38 +1,38 @@
 # Makimono (Madara DB Visualizer)
 
-> A Madara RocksDB visualizer shipped as a single command.
+```text
+Makimono: scroll your Madara DB into a UI, in one command.
+```
 
 [![Deploy to GitHub Pages](https://github.com/Mohiiit/makimono/actions/workflows/deploy.yml/badge.svg)](https://github.com/Mohiiit/makimono/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Makimono detects your Madara DB schema version from `.db-version`, installs the matching visualizer toolchain, and runs the **UI + API from a single port**.
+Makimono is a `rustup`-style toolchain manager for a Madara RocksDB visualizer.
+Point it at a DB directory, and it will:
+
+- detect the Madara DB schema version from `.db-version`
+- install the matching visualizer toolchain
+- run a single server: UI at `/` and API at `/api/*`
+
+![Makimono UI](docs/images/09-makimono-viz.png)
 
 ## Why “Makimono”?
 
 In Naruto, a *makimono* is a scroll: compact, portable, and used to carry the important stuff.
 
-That’s the vibe here: you point Makimono at a Madara RocksDB directory, and it brings the right visualizer along for the ride (matching your DB schema version).
+That’s the vibe here: Makimono carries the right visualizer for your DB schema version.
 
-## Naming (So It's Not Confusing)
+## Naming
 
-- **Makimono**: the end-user CLI you install and run (`makimono run ...`).
-- **`makimono-viz`**: the versioned toolchain binary that Makimono downloads and runs for your DB version.
-- **Madara DB Visualizer**: the web UI title (served by `makimono-viz`).
+- `makimono`: the end-user CLI you install and run (`makimono run ...`)
+- `makimono-viz`: the versioned toolchain binary that Makimono downloads and executes
+- “Madara DB Visualizer”: the web UI title (served by `makimono-viz`)
 
-This repository was previously named `madara-db-visualizer`.
+This repo was previously named `madara-db-visualizer`.
 
-![Makimono UI](docs/images/09-makimono-viz.png)
+## Try It (No Docker)
 
-## Quickstart (No Docker)
-
-### What You Get
-
-- Single command: `makimono run <path>`
-- Zero Docker requirement for end users
-- Compatibility clarity via `.db-version`-based toolchains
-- One port serving everything: UI `/` + API `/api/*`
-
-### Install
+### 1) Install
 
 macOS/Linux:
 ```bash
@@ -51,7 +51,7 @@ Developer fallback (build from source):
 cargo install --git https://github.com/Mohiiit/makimono.git --bin makimono
 ```
 
-### Run
+### 2) Run
 
 Pass either the Madara base path or the RocksDB directory:
 ```bash
