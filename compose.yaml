@@ -1,4 +1,4 @@
-name: madara-db-visualizer
+name: makimono
 
 services:
   api:

@@ -1,16 +1,113 @@
+#[cfg(feature = "embedded-ui")]
+pub mod embedded;
+
+use axum::Router;
+use std::sync::Arc;
+use tower_http::cors::CorsLayer;
+
+/// Build the API router. When `cors` is `Some`, it will be layered on top (used by the standalone API).
+pub fn build_router(state: Arc<AppState>, cors: Option<CorsLayer>) -> Router {
+    let app = Router::new()
+        .route("/api/health", axum::routing::get(health))
+        .route("/api/stats", axum::routing::get(stats))
+        .route("/api/blocks", axum::routing::get(blocks))
+        .route(
+            "/api/blocks/{block_number}",
+            axum::routing::get(block_detail),
+        )
+        .route(
+            "/api/blocks/{block_number}/transactions",
+            axum::routing::get(block_transactions),
+        )
+        .route(
+            "/api/blocks/{block_number}/transactions/{tx_index}",
+            axum::routing::get(transaction_detail_by_index),
+        )
+        .route(
+            "/api/transactions/{tx_hash}",
+            axum::routing::get(transaction_detail),
+        )
+        .route("/api/contracts", axum::routing::get(contracts))
+        .route(
+            "/api/contracts/{address}",
+            axum::routing::get(contract_detail),
+        )
+        .route(
+            "/api/contracts/{address}/storage",
+            axum::routing::get(contract_storage),
+        )
+        .route("/api/classes", axum::routing::get(classes))
+        .route(
+            "/api/classes/{class_hash}",
+            axum::routing::get(class_detail),
+        )
+        .route(
+            "/api/blocks/{block_number}/state-diff",
+            axum::routing::get(block_state_diff),
+        )
+        .route("/api/search", axum::routing::get(search))
+        // Index endpoints
+        .route("/api/index/status", axum::routing::get(index_status))
+        .route("/api/index/sync", axum::routing::post(index_sync))
+        .route(
+            "/api/index/transactions",
+            axum::routing::get(filtered_transactions),
+        )
+        .route(
+            "/api/index/contracts",
+            axum::routing::get(filtered_contracts),
+        )
+        // SQL query execution endpoints
+        .route("/api/index/tables", axum::routing::get(index_tables))
+        .route(
+            "/api/index/tables/{name}/schema",
+            axum::routing::get(index_table_schema),
+        )
+        .route("/api/index/query", axum::routing::post(index_query))
+        // Raw column family browsing endpoints
+        .route("/api/raw/cf", axum::routing::get(raw_list_column_families))
+        .route("/api/raw/cf/{name}/stats", axum::routing::get(raw_cf_stats))
+        .route("/api/raw/cf/{name}/keys", axum::routing::get(raw_list_keys))
+        // Raw key-value fetch endpoints
+        .route(
+            "/api/raw/cf/{name}/key/{key_hex}",
+            axum::routing::get(raw_get_value),
+        )
+        .route(
+            "/api/raw/cf/{name}/keys/batch",
+            axum::routing::post(raw_batch_get_values),
+        )
+        // Schema documentation endpoints
+        .route(
+            "/api/schema/categories",
+            axum::routing::get(schema_categories),
+        )
+        .route(
+            "/api/schema/column-families",
+            axum::routing::get(schema_column_families),
+        )
+        .route(
+            "/api/schema/column-families/{name}",
+            axum::routing::get(schema_column_family_detail),
+        )
+        .with_state(state);
+
+    match cors {
+        Some(cors) => app.layer(cors),
+        None => app,
+    }
+}
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{get, post},
-    Json, Router,
+    Json,
 };
-use clap::Parser;
 use db_reader::DbReader;
 use indexer::Indexer;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use tower_http::cors::{Any, CorsLayer};
+use std::sync::Mutex;
 use visualizer_types::{
     BatchKeyValueResponse, BatchKeysRequest, BlockDetail, BlockListResponse, BlockSummary,
     ClassListResponse, ClassResponse, ColumnFamilyInfo, ColumnFamilyListResponse,
@@ -26,30 +123,13 @@ use visualizer_types::{
     TransactionSummary,
 };
 
-#[derive(Parser, Debug)]
-#[command(name = "madara-db-visualizer-api")]
-#[command(about = "API server for Madara DB Visualizer")]
-struct Args {
-    /// Path to the Madara RocksDB database
-    #[arg(long, default_value = "/tmp/madara_devnet_poc_v2/db")]
-    db_path: String,
-
-    /// Path to the SQLite index database
-    #[arg(long, default_value = "/tmp/madara_visualizer_index.db")]
-    index_path: String,
-
-    /// Port to listen on
-    #[arg(long, default_value = "3000")]
-    port: u16,
-}
-
-struct AppState {
-    db: DbReader,
-    indexer: Mutex<Indexer>,
+pub struct AppState {
+    pub db: DbReader,
+    pub indexer: Mutex<Indexer>,
 }
 
 // Keep in sync with upstream Madara `.db-versions.yml` as we validate more versions.
-const SUPPORTED_MADARA_DB_VERSIONS: &[u32] = &[8, 9];
+pub const SUPPORTED_MADARA_DB_VERSIONS: &[u32] = &[8, 9];
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
@@ -1038,103 +1118,4 @@ async fn index_query(
         row_count: result.row_count,
         truncated: result.truncated,
     }))
-}
-
-#[tokio::main]
-async fn main() {
-    let args = Args::parse();
-
-    // Open database
-    let db = match DbReader::open(&args.db_path) {
-        Ok(db) => db,
-        Err(e) => {
-            eprintln!("Failed to open database at {}: {}", args.db_path, e);
-            std::process::exit(1);
-        }
-    };
-
-    // Open indexer
-    let indexer = match Indexer::open(&args.index_path) {
-        Ok(idx) => idx,
-        Err(e) => {
-            eprintln!("Failed to open index at {}: {}", args.index_path, e);
-            std::process::exit(1);
-        }
-    };
-
-    let state = Arc::new(AppState {
-        db,
-        indexer: Mutex::new(indexer),
-    });
-
-    // Initial sync
-    {
-        let mut idx = state.indexer.lock().unwrap();
-        match idx.sync_from_db(&state.db) {
-            Ok(count) => println!("Initial index sync: {} blocks indexed", count),
-            Err(e) => eprintln!("Warning: Initial index sync failed: {}", e),
-        }
-    }
-
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    let app = Router::new()
-        .route("/api/health", get(health))
-        .route("/api/stats", get(stats))
-        .route("/api/blocks", get(blocks))
-        .route("/api/blocks/{block_number}", get(block_detail))
-        .route(
-            "/api/blocks/{block_number}/transactions",
-            get(block_transactions),
-        )
-        .route(
-            "/api/blocks/{block_number}/transactions/{tx_index}",
-            get(transaction_detail_by_index),
-        )
-        .route("/api/transactions/{tx_hash}", get(transaction_detail))
-        .route("/api/contracts", get(contracts))
-        .route("/api/contracts/{address}", get(contract_detail))
-        .route("/api/contracts/{address}/storage", get(contract_storage))
-        .route("/api/classes", get(classes))
-        .route("/api/classes/{class_hash}", get(class_detail))
-        .route(
-            "/api/blocks/{block_number}/state-diff",
-            get(block_state_diff),
-        )
-        .route("/api/search", get(search))
-        // Index endpoints
-        .route("/api/index/status", get(index_status))
-        .route("/api/index/sync", post(index_sync))
-        .route("/api/index/transactions", get(filtered_transactions))
-        .route("/api/index/contracts", get(filtered_contracts))
-        // SQL query execution endpoints
-        .route("/api/index/tables", get(index_tables))
-        .route("/api/index/tables/{name}/schema", get(index_table_schema))
-        .route("/api/index/query", post(index_query))
-        // Raw column family browsing endpoints
-        .route("/api/raw/cf", get(raw_list_column_families))
-        .route("/api/raw/cf/{name}/stats", get(raw_cf_stats))
-        .route("/api/raw/cf/{name}/keys", get(raw_list_keys))
-        // Raw key-value fetch endpoints
-        .route("/api/raw/cf/{name}/key/{key_hex}", get(raw_get_value))
-        .route("/api/raw/cf/{name}/keys/batch", post(raw_batch_get_values))
-        // Schema documentation endpoints
-        .route("/api/schema/categories", get(schema_categories))
-        .route("/api/schema/column-families", get(schema_column_families))
-        .route(
-            "/api/schema/column-families/{name}",
-            get(schema_column_family_detail),
-        )
-        .with_state(state)
-        .layer(cors);
-
-    let addr = format!("0.0.0.0:{}", args.port);
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    println!("API server running on http://localhost:{}", args.port);
-    println!("Database path: {}", args.db_path);
-    println!("Index path: {}", args.index_path);
-    axum::serve(listener, app).await.unwrap();
 }

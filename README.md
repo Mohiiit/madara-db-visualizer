@@ -1,8 +1,33 @@
-# Madara DB Visualizer
+# Makimono (Madara DB Visualizer)
 
-A web-based **Database Inspector** for Madara's RocksDB - like pgAdmin but for blockchain storage. Understand how data is stored, inspect raw keys/values, and write custom SQL queries.
+A web-based **Database Inspector** for Madara's RocksDB, shipped as a single command (like `rustup`/`starkliup` but for DB visualization).
+
+Makimono detects your Madara DB schema version from `.db-version`, installs the matching visualizer toolchain, and runs the UI + API from a single port.
+
+Note: this repository was renamed from `madara-db-visualizer` to `makimono`.
+
+## Compatibility (Madara DB Versions)
+
+Madara stores a DB schema version in a `.db-version` file under the Madara base path (next to the `db/` directory).
+
+Makimono reads `.db-version` and selects a matching toolchain release tag:
+- Immutable: `N.x.y` (example: `9.0.1`)
+- Moving alias: `N` (example: `9`) points to the latest compatible build
+
+If `.db-version` is missing, Makimono falls back to the highest installed toolchain (or errors if none are installed).
+
+Currently validated: `8` and `9`.
+
+Overrides:
+- `makimono run <path> --db-version <N>` to force a toolchain version
+- `makimono run <path> --offline` to disable downloads (requires the toolchain to be installed already)
 
 ## Screenshots
+
+### Makimono (Single Port: UI + API)
+Run `makimono-viz` (the toolchain binary) to serve the UI and API from the same origin.
+
+![Makimono UI](docs/images/09-makimono-viz.png)
 
 ### Docker Compose (Local)
 Run the full app (API + web UI) with a single command and a local Madara RocksDB path.
@@ -64,7 +89,45 @@ Write custom SQL queries against the indexed data (blocks, transactions, events,
 
 ## Quick Start
 
-### Option A: Docker Compose (Recommended)
+### Option A: Makimono (Single Command, No Docker)
+
+Makimono ships the visualizer as a **single command**, and automatically selects the correct toolchain for your Madara DB version (from `.db-version`).
+
+If the install script returns 404s, it usually means GitHub Releases for the bootstrapper/toolchains haven't been published yet for this repo.
+In that case, use Docker Compose or build locally (options below).
+
+**Prerequisites (for install scripts):**
+- macOS/Linux: `curl`, `tar`, and a SHA256 tool (`sha256sum` or `shasum` or `openssl`)
+- Windows: PowerShell with `Invoke-WebRequest` and `Expand-Archive`
+
+**Install (macOS/Linux):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Mohiiit/makimono/main/install.sh | bash
+```
+
+**Install (Windows PowerShell):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/Mohiiit/makimono/main/install.ps1 | iex
+```
+
+**Run:**
+```bash
+# Pass either Madara base-path or RocksDB directory
+makimono run ~/.madara
+makimono run ~/.madara/db
+
+# Or run the bundled sample DB
+makimono run ./sample-db
+```
+
+Open `http://127.0.0.1:8080`.
+
+**Notes:**
+- You can override the detection via `--db-version <N>`.
+- Use `--offline` to disable downloads (must already have the toolchain installed).
+- `--open` defaults to `true` on macOS/Windows and `false` on Linux (override with `--open=true|false`).
+
+### Option B: Docker Compose
 
 **Prerequisites:**
 - Docker Desktop (macOS/Windows) or Docker Engine (Linux)
@@ -111,7 +174,7 @@ ROCKSDB_PATH=~/.madara/db docker compose -f compose.yaml up --build
 # ROCKSDB_PATH=/path/to/custom-db DB_DIR_NAME=custom-db docker compose -f compose.yaml up --build
 ```
 
-### Option B: Local Build (Rust + Trunk)
+### Option C: Local Build (Rust + Trunk)
 
 #### Prerequisites
 
@@ -141,16 +204,17 @@ npm run css
 #### Step 1: Clone and Build
 
 ```bash
-git clone https://github.com/Mohiiit/madara-db-visualizer.git
-cd madara-db-visualizer
+git clone https://github.com/Mohiiit/makimono.git
+cd makimono
 
-# Build the API server
-cargo build -p api --release
+# Build the standalone API server (no UI embedding)
+cargo build -p api --release --bin madara-db-visualizer-api
 
-# Build the frontend
-cd crates/frontend
-trunk build index.html --release
-cd ../..
+# Build embedded UI assets (required for makimono-viz)
+./scripts/build_dist.sh
+
+# Build the single-port server (UI + API)
+cargo build -p api --release --features embedded-ui --bin makimono-viz
 ```
 
 #### Step 2: Find Your Madara Database Path
@@ -178,18 +242,23 @@ ls ~/.madara/db/*.sst  # optional sanity check
 
 #### Step 3: Start the Servers
 
-**Terminal 1 - API Server:**
+**Option 1: Single port (UI + API):**
 ```bash
 # Replace with your actual database path
-./target/release/api --db-path ~/.madara/db
+./target/release/makimono-viz --db-path ~/.madara/db
 
 # Or with cargo
-cargo run -p api --release -- --db-path ~/.madara/db
+cargo run -p api --release --features embedded-ui --bin makimono-viz -- --db-path ~/.madara/db
 ```
 
-**Terminal 2 - Frontend Server:**
+Open `http://127.0.0.1:8080`.
+
+**Option 2: Separate ports (API + frontend dev server):**
 ```bash
-# Serve the built frontend
+# Terminal 1 - API server (CORS enabled)
+./target/release/madara-db-visualizer-api --db-path ~/.madara/db --index-path /tmp/madara_visualizer_index.db --port 3000
+
+# Terminal 2 - Serve the built frontend
 cd crates/frontend/dist
 python3 -m http.server 8080
 ```
@@ -198,12 +267,14 @@ python3 -m http.server 8080
 
 Open http://localhost:8080 in your browser.
 
+If you're using separate ports, you may need to set the API base via `?api=http://127.0.0.1:3000` (or via `localStorage["api_url"]`).
+
 ## Configuration
 
 ### API Server Options
 
 ```bash
-./target/release/api --help
+./target/release/madara-db-visualizer-api --help
 
 Options:
   --db-path <PATH>      Path to the Madara RocksDB database directory (usually `<base-path>/db`)
@@ -267,7 +338,7 @@ curl -X POST http://localhost:3000/api/index/query \
 ## Project Structure
 
 ```
-madara-db-visualizer/
+makimono/
 ├── Cargo.toml              # Workspace root
 ├── crates/
 │   ├── api/                # Axum HTTP server
@@ -299,10 +370,15 @@ Notes:
 
 ## Releases / Tagging
 
-This repo tags releases by the **Madara DB schema version** (`.db-version`) to make compatibility obvious long-term.
+This repo tags toolchain releases by the **Madara DB schema version** (`.db-version`) to make compatibility obvious.
 
-Example:
-- Tag `9` means the release targets Madara DB schema version `9` (and should clearly state which versions were validated).
+Toolchain policy:
+- Immutable releases: `<db_version>.<major>.<patch>` (example: `9.0.1`)
+- Moving alias tag: `<db_version>` (example: `9`) always points to the latest compatible build for that DB version
+
+Bootstrapper policy:
+- Immutable releases: `makimono-<semver>` (example: `makimono-0.1.0`)
+- Moving alias tag: `makimono`
 
 ### Port already in use
 ```bash
@@ -346,4 +422,4 @@ trunk serve index.html
 
 ## License
 
-MIT
+MIT. See `LICENSE`.

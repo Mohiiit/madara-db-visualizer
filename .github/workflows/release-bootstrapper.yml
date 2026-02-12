@@ -1,0 +1,141 @@
+name: Release bootstrapper (makimono)
+
+on:
+  push:
+    tags:
+      - "makimono-*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            os_name: linux
+            arch: x64
+          - os: macos-13
+            os_name: macos
+            arch: x64
+          - os: macos-14
+            os_name: macos
+            arch: arm64
+          - os: windows-2022
+            os_name: windows
+            arch: x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build makimono
+        shell: bash
+        if: runner.os != 'Windows'
+        run: cargo build -p makimono --release
+
+      - name: Build makimono (windows)
+        shell: pwsh
+        if: runner.os == 'Windows'
+        run: cargo build -p makimono --release
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          OS="${{ matrix.os_name }}"
+          ARCH="${{ matrix.arch }}"
+
+          cp target/release/makimono ./makimono
+          tar -czf "makimono-${TAG}-${OS}-${ARCH}.tar.gz" makimono
+          rm -f ./makimono
+
+          # Also produce alias-named asset for the moving `makimono` tag.
+          cp target/release/makimono ./makimono
+          tar -czf "makimono-makimono-${OS}-${ARCH}.tar.gz" makimono
+          rm -f ./makimono
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $Os = "${{ matrix.os_name }}"
+          $Arch = "${{ matrix.arch }}"
+          $Tag = $env:GITHUB_REF_NAME
+
+          Copy-Item -Force target/release/makimono.exe makimono.exe
+          Compress-Archive -Path makimono.exe -DestinationPath ("makimono-$Tag-$Os-$Arch.zip") -Force
+          Remove-Item -Force makimono.exe
+
+          Copy-Item -Force target/release/makimono.exe makimono.exe
+          Compress-Archive -Path makimono.exe -DestinationPath ("makimono-makimono-$Os-$Arch.zip") -Force
+          Remove-Item -Force makimono.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: makimono-${{ matrix.os_name }}-${{ matrix.arch }}
+          path: |
+            makimono-*.tar.gz
+            makimono-*.zip
+
+  release:
+    name: release
+    needs: [build]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Prepare release assets (immutable + alias)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          ALIAS="makimono"
+          echo "ALIAS_TAG=$ALIAS" >> "$GITHUB_ENV"
+
+          mkdir -p out/immutable out/alias
+
+          find dist -type f \( -name "makimono-${TAG}-*.tar.gz" -o -name "makimono-${TAG}-*.zip" \) -print -exec cp {} out/immutable/ \\;
+          find dist -type f \( -name "makimono-makimono-*.tar.gz" -o -name "makimono-makimono-*.zip" \) -print -exec cp {} out/alias/ \\;
+
+          (cd out/immutable && sha256sum makimono-${TAG}-* > SHA256SUMS)
+          (cd out/alias && sha256sum makimono-makimono-* > SHA256SUMS)
+
+          # Force-move the alias tag to this commit.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "$ALIAS" "$GITHUB_SHA"
+          git push -f origin "$ALIAS"
+
+          # Recreate alias release to avoid duplicate assets.
+          gh release delete "$ALIAS" -y || true
+
+      - name: Create GitHub release (immutable)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            out/immutable/makimono-*
+            out/immutable/SHA256SUMS
+
+      - name: Create GitHub release (alias)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.ALIAS_TAG }}
+          files: |
+            out/alias/makimono-*
+            out/alias/SHA256SUMS
+

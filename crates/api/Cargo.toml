@@ -3,15 +3,42 @@ name = "api"
 version.workspace = true
 edition = "2021"
 
+[features]
+default = []
+embedded-ui = []
+
+[[bin]]
+name = "madara-db-visualizer-api"
+path = "src/bin/madara-db-visualizer-api.rs"
+
+[[bin]]
+name = "makimono-viz"
+path = "src/bin/makimono-viz.rs"
+required-features = ["embedded-ui"]
+
 [dependencies]
 visualizer-types = { path = "../types" }
 db-reader = { path = "../db-reader" }
 indexer = { path = "../indexer" }
 schema = { path = "../schema" }
-tokio.workspace = true
+
+# runtime
 axum.workspace = true
-tower-http.workspace = true
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+directories = "5"
+hex = "0.4"
+http = "1"
+include_dir = "0.7"
+mime_guess = "2"
 serde.workspace = true
 serde_json.workspace = true
-clap = { version = "4", features = ["derive"] }
-hex = "0.4"
+sha2 = "0.10"
+tokio.workspace = true
+tower-http.workspace = true
+
+[build-dependencies]
+fs_extra = "1"
+
+[dev-dependencies]
+tower = "0.5"

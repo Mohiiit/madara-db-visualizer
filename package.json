@@ -1,5 +1,5 @@
 {
-  "name": "madara-db-visualizer",
+  "name": "makimono",
   "version": "0.1.0",
   "scripts": {
     "css": "npx tailwindcss -i ./input.css -o ./output.css --watch"

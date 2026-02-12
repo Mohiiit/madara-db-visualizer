@@ -1,0 +1,145 @@
+name: Release toolchain (makimono-viz)
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            os_name: linux
+            arch: x64
+          - os: macos-13
+            os_name: macos
+            arch: x64
+          - os: macos-14
+            os_name: macos
+            arch: arm64
+          - os: windows-2022
+            os_name: windows
+            arch: x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build embedded dist
+        shell: bash
+        run: ./scripts/build_dist.sh
+
+      - name: Build makimono-viz
+        shell: bash
+        run: cargo build -p api --release --features embedded-ui --bin makimono-viz
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          OS="${{ matrix.os_name }}"
+          ARCH="${{ matrix.arch }}"
+
+          mkdir -p pkg/bin
+          cp target/release/makimono-viz pkg/bin/makimono-viz
+          tar -czf "makimono-viz-${TAG}-${OS}-${ARCH}.tar.gz" -C pkg .
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $Tag = $env:GITHUB_REF_NAME
+          $Os = "${{ matrix.os_name }}"
+          $Arch = "${{ matrix.arch }}"
+
+          New-Item -ItemType Directory -Force -Path pkg/bin | Out-Null
+          Copy-Item -Force target/release/makimono-viz.exe pkg/bin/makimono-viz.exe
+          Compress-Archive -Path pkg/* -DestinationPath ("makimono-viz-$Tag-$Os-$Arch.zip") -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: makimono-viz-${{ matrix.os_name }}-${{ matrix.arch }}
+          path: |
+            makimono-viz-*.tar.gz
+            makimono-viz-*.zip
+
+  release:
+    name: release
+    needs: [build]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Prepare release assets (immutable + alias)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          MAJOR="${TAG%%.*}"
+          echo "MAJOR_TAG=$MAJOR" >> "$GITHUB_ENV"
+
+          mkdir -p out/immutable out/alias
+
+          # Flatten artifacts into a single dir.
+          find dist -type f \( -name "makimono-viz-*.tar.gz" -o -name "makimono-viz-*.zip" \) -print -exec cp {} out/immutable/ \\;
+
+          # Create alias-named copies (makimono downloads by alias tag + alias file names).
+          for f in out/immutable/makimono-viz-"${TAG}"-*; do
+            base="$(basename "$f")"
+            cp "$f" "out/alias/${base/${TAG}/${MAJOR}}"
+          done
+
+          (cd out/immutable && sha256sum makimono-viz-* > SHA256SUMS)
+          (cd out/alias && sha256sum makimono-viz-* > SHA256SUMS)
+
+          # Force-move the alias tag (e.g. "9") to this commit.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "$MAJOR" "$GITHUB_SHA"
+          git push -f origin "$MAJOR"
+
+          # Recreate alias release to avoid accumulating/duplicate assets.
+          gh release delete "$MAJOR" -y || true
+
+      - name: Create GitHub release (immutable)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            out/immutable/makimono-viz-*
+            out/immutable/SHA256SUMS
+
+      - name: Create GitHub release (alias)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.MAJOR_TAG }}
+          files: |
+            out/alias/makimono-viz-*
+            out/alias/SHA256SUMS
